@@ -562,6 +562,33 @@
         </div>
       </div>
 
+      <h2 class="section-title">Clientes ganados y perdidos</h2>
+      <p class="page-sub" style="margin-top:-6px;">Usa el mismo filtro de fecha de arriba. "Ganado" = entró como cliente (desde el CRM o registro directo). "Perdido" = un cliente activo que se canceló (desertor), no se refiere a leads perdidos del CRM.</p>
+      <div class="cards-grid">
+        <div class="metric-card">
+          <div class="metric-label">Clientes activos ahora</div>
+          <div class="metric-value" id="flujoActivos">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Ganados en el periodo</div>
+          <div class="metric-value accent-green" id="flujoGanados">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Perdidos en el periodo</div>
+          <div class="metric-value accent-red" id="flujoPerdidos">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Neto en el periodo</div>
+          <div class="metric-value" id="flujoNeto">—</div>
+        </div>
+      </div>
+      <div class="charts-grid" style="grid-template-columns:1fr;">
+        <div class="chart-card">
+          <h3>Ganados vs. perdidos por mes</h3>
+          <canvas id="chartFlujoClientes"></canvas>
+        </div>
+      </div>
+
       <div class="charts-grid">
         <div class="chart-card">
           <h3>Ingresos vs. Gastos</h3>
@@ -933,9 +960,15 @@
               <select id="cEstatus">
                 <option value="activo">Activo</option>
                 <option value="archivado">Archivado</option>
-                <option value="cancelado">Cancelado</option>
+                <option value="cancelado">Cancelado (desertor)</option>
               </select>
             </div>
+          </div>
+
+          <div class="field hidden" id="cRazonCancelacionWrap">
+            <label>¿Por qué se fue?</label>
+            <textarea id="cRazonCancelacion" placeholder="Ej. se fue con otra agencia, recortó presupuesto, no vio resultados…"></textarea>
+            <p class="page-sub" style="margin:6px 0 0; font-size:11px;">Esto alimenta la gráfica de "Clientes perdidos" en el Dashboard.</p>
           </div>
 
           <div class="field" id="cFechaAltaWrap">
@@ -1878,6 +1911,18 @@ function renderClienteCard(id, c){
 
 function cambiarEstatusCliente(id, nuevoEstatus){
   const etiquetas = { activo:'reactivar', archivado:'archivar', cancelado:'cancelar' };
+
+  if (nuevoEstatus === 'cancelado') {
+    const razon = prompt('¿Por qué se fue este cliente? (esto alimenta la estadística de "Clientes perdidos" en el Dashboard)', '');
+    if (razon === null) return; // canceló el prompt, no hace nada
+    db.collection('clientes').doc(id).update({
+      estatus: 'cancelado',
+      razonCancelacion: razon.trim(),
+      fechaCancelacion: new Date().toISOString().slice(0,10)
+    }).then(cargarClientes).catch(err => alert('Error: ' + err.message));
+    return;
+  }
+
   if (!confirm(`¿Seguro que quieres ${etiquetas[nuevoEstatus]} este cliente? No se borra nada, solo cambia su estatus — lo puedes reactivar después.`)) return;
   db.collection('clientes').doc(id).update({ estatus: nuevoEstatus }).then(cargarClientes).catch(err => alert('Error: ' + err.message));
 }
@@ -1965,6 +2010,7 @@ function renderDatosGeneralesFicha(c){
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Tipo:</strong> ${c.tipoCliente === 'recurrente' ? 'Recurrente' : 'Pago único'}${c.tipoCliente === 'recurrente' ? ` · ${formatearMoneda(c.montoMensual)}/mes · día de pago ${c.diaPago || '—'}` : ''}</p>
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Estatus:</strong> ${etiquetaEstatusCliente(c)} &nbsp;·&nbsp; <strong style="color:var(--white);">Riesgo / prob. de cobro:</strong> ${riesgoBadge}</p>
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Fecha de alta:</strong> ${c.fechaAlta || '—'} &nbsp;·&nbsp; <strong style="color:var(--white);">Responsable:</strong> ${c.responsable || '—'}</p>
+    ${c.estatus === 'cancelado' ? `<p class="page-sub" style="margin:0 0 6px; color:#ff8b91;"><strong style="color:#ff8b91;">Cancelado el ${c.fechaCancelacion || '—'}:</strong> ${c.razonCancelacion || 'Sin razón especificada'}</p>` : ''}
     ${c.motivoRiesgo ? `<p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Motivo del riesgo:</strong> ${c.motivoRiesgo}</p>` : ''}
     ${c.proximaAccion ? `<p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Próxima acción:</strong> ${c.proximaAccion}${c.fechaProximaAccion ? ' (' + c.fechaProximaAccion + ')' : ''}</p>` : ''}
     ${c.notasRetencion ? `<p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Notas de retención:</strong> ${c.notasRetencion}</p>` : ''}
@@ -2004,6 +2050,11 @@ function actualizarVisibilidadTipo(){
 }
 $('cTipo').addEventListener('change', actualizarVisibilidadTipo);
 
+function actualizarVisibilidadRazonCancelacion(){
+  $('cRazonCancelacionWrap').classList.toggle('hidden', $('cEstatus').value !== 'cancelado');
+}
+$('cEstatus').addEventListener('change', actualizarVisibilidadRazonCancelacion);
+
 function seleccionarRiesgo(val){
   $('cRiesgo').value = val;
   document.querySelectorAll('#riesgoOptions .riesgo-opt').forEach(el => {
@@ -2033,6 +2084,8 @@ function abrirFormularioCliente(id){
   $('cMonto').value = c.montoMensual || '';
   $('cDiaPago').value = c.diaPago || '';
   $('cEstatus').value = (c.estatus === 'inactivo' ? 'archivado' : c.estatus) || 'activo';
+  $('cRazonCancelacion').value = c.razonCancelacion || '';
+  actualizarVisibilidadRazonCancelacion();
   $('cFechaAlta').value = c.fechaAlta || (id ? '' : new Date().toISOString().slice(0,10));
   $('cMotivo').value = c.motivoRiesgo || '';
   $('cProximaAccion').value = c.proximaAccion || '';
@@ -2068,6 +2121,14 @@ $('clienteForm').addEventListener('submit', (e) => {
     estatus: $('cEstatus').value,
     fechaAlta: $('cFechaAlta').value || new Date().toISOString().slice(0,10)
   };
+
+  if (datos.estatus === 'cancelado') {
+    const c = id ? (clientesCache[id] || {}) : {};
+    datos.razonCancelacion = $('cRazonCancelacion').value.trim();
+    // Si ya estaba cancelado antes, conserva la fecha original de cancelación;
+    // si apenas se está cancelando ahora, registra hoy.
+    datos.fechaCancelacion = (c.estatus === 'cancelado' && c.fechaCancelacion) ? c.fechaCancelacion : new Date().toISOString().slice(0,10);
+  }
 
   if (tipo === 'recurrente') {
     datos.montoMensual = Number($('cMonto').value) || 0;
@@ -2481,9 +2542,58 @@ $('dashFiltro').addEventListener('change', () => {
   const personalizado = $('dashFiltro').value === 'personalizado';
   $('dashDesdeWrap').classList.toggle('hidden', !personalizado);
   $('dashHastaWrap').classList.toggle('hidden', !personalizado);
-  if (!personalizado) cargarResumenFinanciero();
+  if (!personalizado) { cargarResumenFinanciero(); cargarFlujoClientes(); }
 });
-$('btnAplicarFiltro').addEventListener('click', cargarResumenFinanciero);
+$('btnAplicarFiltro').addEventListener('click', () => { cargarResumenFinanciero(); cargarFlujoClientes(); });
+
+let chartFlujo = null;
+function cargarFlujoClientes(){
+  const { inicio, fin } = calcularRangoFecha();
+  const inicioStr = inicio.toISOString().slice(0,10);
+  const finStr = fin.toISOString().slice(0,10);
+
+  db.collection('clientes').get().then(snap => {
+    const todos = snap.docs.map(d => d.data());
+    const activos = todos.filter(c => clienteEsActivo(c)).length;
+    const ganados = todos.filter(c => c.fechaAlta && c.fechaAlta >= inicioStr && c.fechaAlta < finStr);
+    const perdidos = todos.filter(c => c.estatus === 'cancelado' && c.fechaCancelacion && c.fechaCancelacion >= inicioStr && c.fechaCancelacion < finStr);
+    const neto = ganados.length - perdidos.length;
+
+    $('flujoActivos').textContent = activos;
+    $('flujoGanados').textContent = ganados.length;
+    $('flujoPerdidos').textContent = perdidos.length;
+    $('flujoNeto').textContent = (neto > 0 ? '+' : '') + neto;
+    $('flujoNeto').className = 'metric-value' + (neto < 0 ? ' accent-red' : neto > 0 ? ' accent-green' : '');
+
+    const buckets = {};
+    ganados.forEach(c => { const m = c.fechaAlta.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].ganados++; });
+    perdidos.forEach(c => { const m = c.fechaCancelacion.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].perdidos++; });
+    const meses = Object.keys(buckets).sort();
+
+    if (chartFlujo) chartFlujo.destroy();
+    chartFlujo = new Chart($('chartFlujoClientes'), {
+      type: 'bar',
+      data: {
+        labels: meses.length ? meses : ['Sin movimiento en este periodo'],
+        datasets: [
+          { label:'Ganados', data: meses.map(m => buckets[m].ganados), backgroundColor:'#2ECC71' },
+          { label:'Perdidos', data: meses.map(m => buckets[m].perdidos), backgroundColor:'#E50914' }
+        ]
+      },
+      options: {
+        responsive:true,
+        plugins:{ legend:{ position:'bottom', labels:{ color:'#9A9A9A', boxWidth:12, font:{ size:11 } } } },
+        scales:{ x:{ ticks:{ color:'#9A9A9A' }, grid:{ display:false } }, y:{ ticks:{ color:'#9A9A9A', stepSize:1 }, grid:{ color:'#2A2A2A' } } }
+      }
+    });
+  });
+}
+
+function cargarDashboardCompleto(){
+  cargarResumenFinanciero();
+  cargarFlujoClientes();
+  cargarDashboardMRR();
+}
 
 function cargarResumenFinanciero(){
   const { inicio, fin } = calcularRangoFecha();
@@ -2821,11 +2931,6 @@ function renderChartClientesRiesgo(nv, na, nr){
     },
     options: { responsive:true, plugins:{ legend:{ position:'bottom', labels:{ color:'#9A9A9A' } } } }
   });
-}
-
-function cargarDashboardCompleto(){
-  cargarResumenFinanciero();
-  cargarDashboardMRR();
 }
 
 /* ======================================================
