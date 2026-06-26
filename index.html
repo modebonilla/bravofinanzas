@@ -453,6 +453,7 @@
 </style>
 </head>
 <body>
+<datalist id="serviciosDatalist"></datalist>
 
 <!-- ======================= PANTALLA: PRIMERA VEZ (crear admin) ======================= -->
 <div id="setupScreen" class="auth-wrap hidden">
@@ -805,7 +806,7 @@
           <div id="conversionFormError" class="auth-error hidden"></div>
           <form id="conversionForm">
             <input type="hidden" id="convProspectoId">
-            <div class="field"><label>Servicio contratado</label><input type="text" id="convServicio" required></div>
+            <div class="field"><label>Servicio contratado</label><input type="text" id="convServicio" list="serviciosDatalist" autocomplete="off" required></div>
             <div class="field"><label>Descripción del servicio</label><textarea id="convServicioDescripcion"></textarea></div>
             <div class="field"><label>Tipo de cliente</label>
               <select id="convTipo">
@@ -905,7 +906,7 @@
           <div class="field-row">
             <div class="field">
               <label>Servicio contratado</label>
-              <input type="text" id="cServicio">
+              <input type="text" id="cServicio" list="serviciosDatalist" autocomplete="off">
             </div>
             <div class="field" id="cMontoWrap">
               <label>Monto mensual</label>
@@ -914,8 +915,12 @@
           </div>
 
           <div class="field">
-            <label>Descripción del servicio (detalle, alcance, entregables)</label>
+            <div style="display:flex; justify-content:space-between; align-items:baseline;">
+              <label style="margin:0;">Descripción del servicio (detalle, alcance, entregables)</label>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnCatalogoServicios" style="width:auto; padding:4px 10px; font-size:11px;">Catálogo de servicios</button>
+            </div>
             <textarea id="cServicioDescripcion" placeholder="Ej. gestión de pauta en Meta + reportes quincenales + 4 piezas de contenido al mes…"></textarea>
+            <p class="page-sub" style="margin:6px 0 0; font-size:11px;">Si escribes un servicio que ya existe en tu catálogo, esta descripción se llena sola — y la puedes ajustar para este cliente sin afectar la plantilla original.</p>
           </div>
 
           <div class="field-row" id="cDiaPagoWrap">
@@ -1060,6 +1065,25 @@
       </div>
 
       <!-- Ficha completa de cliente: datos, pagos, EC, quejas, hitos, acciones — todo en un solo lugar -->
+      <!-- Modal: catálogo de servicios (descripciones reutilizables) -->
+      <div class="modal-overlay hidden" id="catalogoServiciosPanel">
+        <div class="modal-box">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:4px;">
+            <h2 style="margin:0;">Catálogo de servicios</h2>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnCerrarCatalogo" style="width:auto; white-space:nowrap;">Cerrar</button>
+          </div>
+          <p class="page-sub" style="margin-top:-6px;">Cada servicio guarda su descripción. Se usa para autocompletar al registrar clientes — la puedes ajustar por cliente sin afectar lo que está guardado aquí.</p>
+
+          <div class="segui-mini-form" style="margin-top:14px;">
+            <div class="field"><label>Nombre del servicio</label><input type="text" id="catNombre" placeholder="Ej. Bravo Start"></div>
+            <div class="field"><label>Descripción</label><textarea id="catDescripcion" placeholder="Ej. 3 reels mensuales, estrategia básica y seguimiento"></textarea></div>
+            <button type="button" class="btn btn-sm" id="btnGuardarServicioCatalogo">Guardar en el catálogo</button>
+          </div>
+
+          <div id="catalogoServiciosList" style="margin-top:18px;"><p class="page-sub" style="margin:0;">Cargando…</p></div>
+        </div>
+      </div>
+
       <div class="modal-overlay hidden" id="fichaClientePanel">
         <div class="modal-box">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:4px;">
@@ -1444,6 +1468,7 @@ auth.onAuthStateChanged(user => {
 /* ---------- Construir el shell según permisos ---------- */
 function iniciarApp(u){
   $('userChip').innerHTML = u.email + '<br>' + (u.permisos.admin ? '<span class="badge">Administrador</span>' : '<span class="badge badge-muted">Usuario</span>');
+  cargarServicios();
 
   if (u.permisos.admin) {
     show($('navUsuarios'));
@@ -1603,6 +1628,117 @@ function cargarUsuarios(){
 /* ======================================================
    CLIENTES + PAGOS + RECIBOS
    ====================================================== */
+/* ======================================================
+   CATÁLOGO DE SERVICIOS — descripciones reutilizables.
+   Se usa para autocompletar "Descripción del servicio" en Clientes y en
+   la conversión del CRM. Editar la descripción de un cliente en particular
+   NO modifica el catálogo — solo se actualiza el catálogo desde aquí o
+   cuando se registra un servicio cuyo nombre todavía no existe.
+   ====================================================== */
+let serviciosCache = {}; // clave: nombre en minúsculas → { id, nombre, descripcion }
+
+function cargarServicios(){
+  return db.collection('servicios').orderBy('nombre').get().then(snap => {
+    serviciosCache = {};
+    snap.forEach(d => {
+      const s = d.data();
+      serviciosCache[(s.nombre||'').toLowerCase()] = Object.assign({ id:d.id }, s);
+    });
+    actualizarDatalistServicios();
+  }).catch(() => {});
+}
+
+function actualizarDatalistServicios(){
+  const dl = $('serviciosDatalist');
+  dl.innerHTML = Object.values(serviciosCache).map(s => `<option value="${s.nombre.replace(/"/g,'&quot;')}"></option>`).join('');
+}
+
+function buscarDescripcionServicio(nombre){
+  const s = serviciosCache[(nombre||'').trim().toLowerCase()];
+  return s ? s.descripcion : null;
+}
+
+/* Si el nombre de servicio no existe todavía en el catálogo, lo crea con la
+   descripción actual. Si ya existe, NO se sobrescribe (así un ajuste para
+   un cliente en particular no daña la plantilla general). */
+function guardarEnCatalogoSiEsNuevo(nombre, descripcion){
+  const limpio = (nombre||'').trim();
+  if (!limpio) return;
+  const clave = limpio.toLowerCase();
+  if (serviciosCache[clave]) return;
+  db.collection('servicios').add({
+    nombre: limpio, descripcion: (descripcion||'').trim(),
+    creadoEn: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(cargarServicios).catch(() => {});
+}
+
+function autocompletarDescripcionServicio(inputServicioId, textareaDescId){
+  const nombre = $(inputServicioId).value;
+  const desc = buscarDescripcionServicio(nombre);
+  if (desc && !$(textareaDescId).value.trim()) $(textareaDescId).value = desc;
+}
+$('cServicio').addEventListener('blur', () => autocompletarDescripcionServicio('cServicio', 'cServicioDescripcion'));
+$('convServicio').addEventListener('blur', () => autocompletarDescripcionServicio('convServicio', 'convServicioDescripcion'));
+
+/* ---------- Modal: gestionar catálogo ---------- */
+function abrirCatalogoServicios(){
+  $('catNombre').value = '';
+  $('catDescripcion').value = '';
+  renderCatalogoServiciosList();
+  show($('catalogoServiciosPanel'));
+}
+$('btnCatalogoServicios').addEventListener('click', abrirCatalogoServicios);
+$('btnCerrarCatalogo').addEventListener('click', () => hide($('catalogoServiciosPanel')));
+$('catalogoServiciosPanel').addEventListener('click', (e) => { if (e.target.id === 'catalogoServiciosPanel') hide($('catalogoServiciosPanel')); });
+
+function renderCatalogoServiciosList(){
+  const cont = $('catalogoServiciosList');
+  const lista = Object.values(serviciosCache).sort((a,b) => a.nombre.localeCompare(b.nombre));
+  if (!lista.length) { cont.innerHTML = '<p class="page-sub" style="margin:0;">Todavía no hay servicios guardados. Se van creando solos cada vez que registras un cliente con un servicio nuevo, o agrégalo aquí arriba.</p>'; return; }
+  cont.innerHTML = lista.map(s => `
+    <div class="segui-mini-form" style="margin-bottom:10px;">
+      <div class="field"><label>${s.nombre}</label><textarea data-desc="${s.id}">${s.descripcion||''}</textarea></div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn btn-sm" data-guardar-servicio="${s.id}" style="width:auto;">Guardar cambios</button>
+        <button type="button" class="btn btn-danger btn-sm" data-eliminar-servicio="${s.id}" style="width:auto;">Eliminar</button>
+      </div>
+    </div>
+  `).join('');
+
+  cont.querySelectorAll('[data-guardar-servicio]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.guardarServicio;
+      const nuevaDesc = cont.querySelector(`[data-desc="${id}"]`).value.trim();
+      db.collection('servicios').doc(id).update({ descripcion: nuevaDesc }).then(cargarServicios).then(() => {
+        btn.textContent = 'Guardado ✓';
+        setTimeout(() => { btn.textContent = 'Guardar cambios'; }, 1500);
+      }).catch(err => alert('Error: ' + err.message));
+    });
+  });
+  cont.querySelectorAll('[data-eliminar-servicio]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('¿Eliminar este servicio del catálogo? Los clientes que ya lo tienen guardado no se modifican, solo deja de sugerirse para nuevos registros.')) return;
+      db.collection('servicios').doc(btn.dataset.eliminarServicio).delete().then(cargarServicios).then(renderCatalogoServiciosList).catch(err => alert('Error: ' + err.message));
+    });
+  });
+}
+
+$('btnGuardarServicioCatalogo').addEventListener('click', () => {
+  const nombre = $('catNombre').value.trim();
+  const descripcion = $('catDescripcion').value.trim();
+  if (!nombre) { alert('Ponle un nombre al servicio.'); return; }
+  const clave = nombre.toLowerCase();
+  const existente = serviciosCache[clave];
+  const promesa = existente
+    ? db.collection('servicios').doc(existente.id).update({ descripcion })
+    : db.collection('servicios').add({ nombre, descripcion, creadoEn: firebase.firestore.FieldValue.serverTimestamp() });
+  promesa.then(cargarServicios).then(() => {
+    $('catNombre').value = '';
+    $('catDescripcion').value = '';
+    renderCatalogoServiciosList();
+  }).catch(err => alert('Error: ' + err.message));
+});
+
 let clientesCache = {};
 let pagosEsteMesPorCliente = new Set();
 let ultimoPagoGenerado = null;
@@ -1950,6 +2086,7 @@ $('clienteForm').addEventListener('submit', (e) => {
     : db.collection('clientes').add(Object.assign({}, datos, { creadoEn: firebase.firestore.FieldValue.serverTimestamp() }));
 
   promesa.then(() => {
+    guardarEnCatalogoSiEsNuevo(datos.servicio, datos.servicioDescripcion);
     hide($('clienteFormPanel'));
     cargarClientes();
   }).catch(err => {
@@ -3831,6 +3968,7 @@ $('conversionForm').addEventListener('submit', (e) => {
   db.collection('clientes').add(datosCliente).then(ref => {
     return db.collection('prospectos').doc(prospectoId).update({ convertido:true, clienteId: ref.id });
   }).then(() => {
+    guardarEnCatalogoSiEsNuevo(datosCliente.servicio, datosCliente.servicioDescripcion);
     hide($('conversionFormPanel'));
     cargarKanban();
     alert('Listo — el cliente ya está activo en Bravo Finanzas.');
