@@ -69,6 +69,10 @@
     margin:0;
   }
   .wordmark span{color:var(--red);}
+  .brand-logo{ display:flex; align-items:center; }
+  .brand-logo img{ height:34px; display:block; }
+  .sidebar .brand-logo img{ height:24px; }
+  @media (max-width:760px){ .sidebar .brand-logo img{ height:22px; } }
   .auth-rule{
     height:3px;
     width:56px;
@@ -459,7 +463,10 @@
 <!-- ======================= PANTALLA: PRIMERA VEZ (crear admin) ======================= -->
 <div id="setupScreen" class="auth-wrap hidden">
   <div class="auth-card">
-    <h1 class="wordmark">BRAVO <span>FINANZAS</span></h1>
+    <div class="brand-logo">
+      <img class="brand-logo-img" alt="Bravo Agency">
+      <h1 class="wordmark brand-logo-fallback" style="display:none;">BRAVO <span>FINANZAS</span></h1>
+    </div>
     <div class="auth-rule"></div>
     <p class="auth-sub">No hay ningún administrador todavía. Crea tu cuenta — quedará con acceso total a la app.</p>
     <div id="setupError" class="auth-error hidden"></div>
@@ -480,7 +487,10 @@
 <!-- ======================= PANTALLA: LOGIN ======================= -->
 <div id="loginScreen" class="auth-wrap hidden">
   <div class="auth-card">
-    <h1 class="wordmark">BRAVO <span>FINANZAS</span></h1>
+    <div class="brand-logo">
+      <img class="brand-logo-img" alt="Bravo Agency">
+      <h1 class="wordmark brand-logo-fallback" style="display:none;">BRAVO <span>FINANZAS</span></h1>
+    </div>
     <div class="auth-rule"></div>
     <p class="auth-sub">Inicia sesión para ver tu panel.</p>
     <div id="loginError" class="auth-error hidden"></div>
@@ -501,7 +511,10 @@
 <!-- ======================= APP ======================= -->
 <div id="appShell" class="shell hidden">
   <div class="sidebar">
-    <h1 class="wordmark">BRAVO <span>FINANZAS</span></h1>
+    <div class="brand-logo">
+      <img class="brand-logo-img" alt="Bravo Agency">
+      <h1 class="wordmark brand-logo-fallback" style="display:none;">BRAVO <span>FINANZAS</span></h1>
+    </div>
     <div class="auth-rule"></div>
 
     <div class="nav-item active" data-page="dashboard" id="navDashboard">Dashboard</div>
@@ -619,6 +632,11 @@
       <div id="resumenPorMesWrap" class="hidden">
         <h2 class="section-title">Ingresos, gastos y utilidad por mes</h2>
         <p class="page-sub" style="margin-top:-6px;">Aparece solo cuando el periodo filtrado cubre más de un mes.</p>
+        <div class="charts-grid" style="grid-template-columns:1fr; margin-bottom:14px;">
+          <div class="chart-card">
+            <canvas id="chartResumenPorMes"></canvas>
+          </div>
+        </div>
         <div class="table-wrap" style="margin-bottom:28px;">
           <table class="proj-table">
             <thead><tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Utilidad</th></tr></thead>
@@ -1047,6 +1065,7 @@
         <form id="pagoForm">
           <input type="hidden" id="pagoClienteId">
           <input type="hidden" id="pagoEstadoCuentaId" value="">
+          <input type="hidden" id="pagoFolioVinculado" value="">
           <div class="field">
             <label>Concepto detallado (qué se le está cobrando)</label>
             <textarea id="pConcepto" placeholder="Ej. Gestión de pauta Meta + 4 piezas de contenido — junio 2026"></textarea>
@@ -1074,6 +1093,16 @@
               <option value="Otro">Otro</option>
             </select>
           </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Periodo cubierto</label>
+              <input type="text" id="pPeriodo" placeholder="Ej. Junio 2026">
+            </div>
+            <div class="field">
+              <label>Referencia (opcional)</label>
+              <input type="text" id="pReferencia" placeholder="Ej. núm. de transferencia">
+            </div>
+          </div>
           <p class="page-sub" id="pTotalPreview" style="margin:-4px 0 16px; font-size:13px;">Total a cobrar: —</p>
           <button type="submit" class="btn">Registrar y generar recibo</button>
           <button type="button" class="btn btn-secondary" id="btnCancelarPago" style="margin-top:8px;">Cancelar</button>
@@ -1092,8 +1121,12 @@
         <form id="estadoCuentaForm">
           <input type="hidden" id="ecClienteId">
           <div class="field">
-            <label>Concepto / periodo (detallado)</label>
+            <label>Concepto / descripción del servicio (detallado)</label>
             <textarea id="ecConcepto" placeholder="Ej. Servicio de junio 2026 — gestión de pauta + reportes"></textarea>
+          </div>
+          <div class="field">
+            <label>Periodo cubierto</label>
+            <input type="text" id="ecPeriodo" placeholder="Ej. Junio 2026, o 21 mayo al 20 junio 2026">
           </div>
           <div class="field">
             <label>Monto del servicio (antes de descuento y anticipo)</label>
@@ -1123,6 +1156,10 @@
           <button type="submit" class="btn">Generar estado de cuenta (PDF)</button>
           <button type="button" class="btn btn-secondary" id="btnCancelarEstadoCuenta" style="margin-top:8px;">Cancelar</button>
         </form>
+        <div id="ecListoActions" class="hidden" style="margin-top:14px;">
+          <button class="btn btn-secondary" id="btnDescargarEC" style="margin-bottom:8px;">Descargar PDF de nuevo</button>
+          <button class="btn" id="btnCerrarEC">Cerrar</button>
+        </div>
       </div>
 
       <!-- Ficha completa de cliente: datos, pagos, EC, quejas, hitos, acciones — todo en un solo lugar -->
@@ -1383,6 +1420,31 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+
+/* ============================================================
+   DATOS FIJOS DE BRAVO AGENCY — usados en el header, login y PDFs
+   ============================================================ */
+const BRAVO_LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABu4AAAN3CAYAAADd2qx3AAAACXBIWXMAAAsTAAALEwEAmpwYAAA0y0lEQVR4nO3djW7cSJKFUcvQ+79yLTRqr2Trj6wimTcizgEG2MH2tEtkMsnMTyw/3W63XwAAAAAAAMBavxf/+QAAAAAAAIBwBwAAAAAAABmEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEA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AACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAAAQQLgDAAAAAACAAMIdAAAAAAAABBDuAAAAAAAAIIBwBwAAAAAAAAGEOwAAAAAAAAgg3AEAAAAAAEAA4Q4AAAAAAAACCHcAAAAAAADwa73/A217fCT3lab7AAAAAElFTkSuQmCC";
+const BRAVO_DIRECCION = "Adalberto Tejeda 25, Colonia Pumar, C.P. 91054, Xalapa, Veracruz.";
+const BRAVO_BANCO = {
+  banco: "BANAMEX",
+  titular: "Modesto Bonilla Rebolledo",
+  tarjeta: "5256 7839 8115 2599",
+  clabe: "002840902519755063"
+};
+const NOTA_LEGAL = "Este documento no es un comprobante fiscal. Es \u00fanicamente un documento interno de control administrativo y confirmaci\u00f3n de pago.";
+const NOTA_PENDIENTE_PAGO = "Favor de realizar el pago antes de la fecha l\u00edmite para evitar pausas en la prestaci\u00f3n del servicio.";
+
+/* Coloca el logo en header, login y setup. Si por alguna razón la imagen no
+   carga, se muestra el texto "BRAVO FINANZAS" de respaldo automáticamente. */
+document.querySelectorAll('.brand-logo-img').forEach(img => {
+  img.onerror = () => {
+    img.style.display = 'none';
+    const fallback = img.parentElement.querySelector('.brand-logo-fallback');
+    if (fallback) fallback.style.display = '';
+  };
+  img.src = BRAVO_LOGO_BASE64;
+});
 
 /* Definición de los módulos de permisos.
    Para agregar un módulo nuevo en el futuro, solo se agrega aquí. */
@@ -1827,6 +1889,13 @@ function formatearFecha(d){
   return date.toLocaleDateString('es-MX', { day:'2-digit', month:'2-digit', year:'numeric' });
 }
 function folioToText(n){ return String(n).padStart(5,'0'); }
+function folioECTexto(n){ return 'EC-' + folioToText(n); }
+function folioRPTexto(n){ return 'RP-' + folioToText(n); }
+function formatearFechaPlana(str){
+  if (!str) return '';
+  const [y,m,d] = str.split('-');
+  return `${d}/${m}/${y}`;
+}
 
 function cargarPagosEsteMes(){
   const now = new Date();
@@ -1990,62 +2059,93 @@ function toggleHistorial(id, card){
   const body = card.querySelector('.cliente-body');
   card.classList.toggle('expanded');
   if (!card.classList.contains('expanded')) return;
-  renderPagosYEC(id, body);
+  renderHistorialPagosUnificado(id, body);
 }
 
-/* Pinta el bloque de "Estados de cuenta pendientes" + "Historial de pagos"
-   dentro de cualquier contenedor — lo usan tanto la tarjeta de Clientes
-   (botón "Pagos") como la Ficha de cliente completa. */
-function renderPagosYEC(id, body){
-  body.innerHTML = '<p class="page-sub" style="margin:0;">Cargando…</p>';
+/* Tabla única de historial: junta estados de cuenta y recibos (vinculados
+   por folio) en una sola fila por transacción — Periodo | Folio | Estatus |
+   Monto | Fecha límite | Fecha de pago | Método | Acciones.
+   La usan tanto la tarjeta de Clientes (botón "Pagos") como la Ficha completa. */
+function renderHistorialPagosUnificado(id, container){
+  container.innerHTML = '<p class="page-sub" style="margin:0;">Cargando…</p>';
   Promise.all([
-    db.collection('pagos').where('clienteId','==', id).get(),
-    db.collection('estadosCuenta').where('clienteId','==', id).where('estatus','==','pendiente').get()
-  ]).then(([snap, ecSnap]) => {
-    let html = '';
+    db.collection('estadosCuenta').where('clienteId','==', id).get(),
+    db.collection('pagos').where('clienteId','==', id).get()
+  ]).then(([ecSnap, pagosSnap]) => {
+    const ecs = ecSnap.docs.map(d => Object.assign({ id:d.id }, d.data()));
+    const pagos = pagosSnap.docs.map(d => Object.assign({ id:d.id }, d.data()));
+    const pagoPorEcId = {};
+    pagos.forEach(p => { if (p.estadoCuentaId) pagoPorEcId[p.estadoCuentaId] = p; });
 
-    if (!ecSnap.empty) {
-      const ecs = ecSnap.docs.map(d => Object.assign({ id:d.id }, d.data()));
-      html += '<p class="page-sub" style="margin:0 0 6px; color:var(--amber); font-weight:700;">Estados de cuenta pendientes de pago</p>';
-      html += ecs.map((ec, i) => `
-        <div class="pago-row">
-          <span>EC ${folioToText(ec.folioEC)} · ${ec.concepto||''} ${ec.fechaVencimiento ? '· vence ' + ec.fechaVencimiento : ''}</span>
-          <span class="pago-monto">${formatearMoneda(ec.monto)}</span>
-          <button class="btn btn-secondary btn-sm" data-ecpdf="${i}">PDF</button>
-          <button class="btn btn-sm" data-ecpagar="${i}">Marcar pagado → recibo</button>
-        </div>
-      `).join('');
-      setTimeout(() => {
-        body.querySelectorAll('button[data-ecpdf]').forEach(btn => {
-          btn.addEventListener('click', () => generarEstadoCuentaPDF(ecs[Number(btn.dataset.ecpdf)]));
-        });
-        body.querySelectorAll('button[data-ecpagar]').forEach(btn => {
-          btn.addEventListener('click', () => abrirFormularioPago(id, ecs[Number(btn.dataset.ecpagar)]));
-        });
-      }, 0);
-    }
+    const hoyStr = new Date().toISOString().slice(0,10);
+    const filas = [];
 
-    if (snap.empty) {
-      html += '<p class="page-sub" style="margin:6px 0 0;">Sin pagos registrados.</p>';
-      body.innerHTML = html;
+    ecs.forEach(ec => {
+      const pagoVinculado = pagoPorEcId[ec.id] || null;
+      let estatus = 'Pagado';
+      if (ec.estatus !== 'pagado') estatus = (ec.fechaVencimiento && ec.fechaVencimiento < hoyStr) ? 'Vencido' : 'Pendiente';
+      filas.push({
+        tipo:'ec', ec, pago: pagoVinculado,
+        periodo: ec.periodo || '—',
+        folioTexto: folioECTexto(ec.folioEC) + (pagoVinculado ? ' / ' + folioRPTexto(pagoVinculado.folio) : ''),
+        estatus, monto: ec.monto,
+        fechaLimite: ec.fechaVencimiento ? formatearFechaPlana(ec.fechaVencimiento) : '—',
+        fechaPago: pagoVinculado ? pagoVinculado.fechaPago : null,
+        metodoPago: pagoVinculado ? (pagoVinculado.metodoPago || '—') : '—',
+        fechaOrden: fechaComo(ec.fechaEmision)
+      });
+    });
+
+    pagos.filter(p => !p.estadoCuentaId).forEach(p => {
+      filas.push({
+        tipo:'pago', ec:null, pago: p,
+        periodo: p.periodo || '—',
+        folioTexto: folioRPTexto(p.folio),
+        estatus:'Pagado', monto: p.monto,
+        fechaLimite:'—',
+        fechaPago: p.fechaPago,
+        metodoPago: p.metodoPago || '—',
+        fechaOrden: fechaComo(p.fechaPago)
+      });
+    });
+
+    if (!filas.length) {
+      container.innerHTML = '<p class="page-sub" style="margin:0;">Sin estados de cuenta ni pagos registrados todavía.</p>';
       return;
     }
-    const pagos = snap.docs.map(d => d.data()).sort((a,b) => {
-      const fa = a.fechaPago.toDate ? a.fechaPago.toDate() : new Date(a.fechaPago);
-      const fb = b.fechaPago.toDate ? b.fechaPago.toDate() : new Date(b.fechaPago);
-      return fb - fa;
-    });
-    html += pagos.map((p, i) => `
-      <div class="pago-row">
-        <span>Recibo ${folioToText(p.folio)} · ${formatearFecha(p.fechaPago)}</span>
-        <span class="pago-monto">${formatearMoneda(p.monto)}</span>
-        <button class="btn btn-secondary btn-sm" data-i="${i}">PDF</button>
+    filas.sort((a,b) => b.fechaOrden - a.fechaOrden);
+
+    const colorEstatus = { Pendiente:'var(--amber)', Vencido:'#ff8b91', Pagado:'var(--green)' };
+
+    container.innerHTML = `
+      <div class="table-wrap">
+        <table class="proj-table">
+          <thead><tr><th>Periodo</th><th>Folio</th><th>Estatus</th><th>Monto</th><th>Fecha límite</th><th>Fecha de pago</th><th>Método</th><th></th></tr></thead>
+          <tbody>
+            ${filas.map((f,i) => `
+              <tr>
+                <td>${f.periodo}</td>
+                <td style="white-space:nowrap;">${f.folioTexto}</td>
+                <td style="color:${colorEstatus[f.estatus]}; font-weight:700;">${f.estatus}</td>
+                <td>${formatearMoneda(f.monto)}</td>
+                <td>${f.fechaLimite}</td>
+                <td>${f.fechaPago ? formatearFecha(f.fechaPago) : '—'}</td>
+                <td>${f.metodoPago}</td>
+                <td style="white-space:nowrap;">
+                  ${f.tipo === 'ec' ? `<button type="button" class="btn btn-secondary btn-sm" data-verec="${i}">EC</button>` : ''}
+                  ${f.tipo === 'ec' && f.estatus !== 'Pagado' ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">Registrar pago</button>` : ''}
+                  ${f.pago ? `<button type="button" class="btn btn-secondary btn-sm" data-verrecibo="${i}">Recibo</button>` : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </div>
-    `).join('');
-    body.innerHTML = html;
-    body.querySelectorAll('button[data-i]').forEach(btn => {
-      btn.addEventListener('click', () => generarReciboPDF(pagos[Number(btn.dataset.i)]));
-    });
+    `;
+
+    container.querySelectorAll('[data-verec]').forEach(btn => btn.addEventListener('click', () => generarEstadoCuentaPDF(filas[Number(btn.dataset.verec)].ec)));
+    container.querySelectorAll('[data-pagarec]').forEach(btn => btn.addEventListener('click', () => abrirFormularioPago(id, filas[Number(btn.dataset.pagarec)].ec)));
+    container.querySelectorAll('[data-verrecibo]').forEach(btn => btn.addEventListener('click', () => generarReciboPDF(filas[Number(btn.dataset.verrecibo)].pago)));
   });
 }
 
@@ -2078,7 +2178,7 @@ function abrirFichaCliente(id){
   $('fichaNombre').textContent = c.nombre || '';
   $('fichaDatosGenerales').innerHTML = renderDatosGeneralesFicha(c);
 
-  renderPagosYEC(id, $('fichaPagosBody'));
+  renderHistorialPagosUnificado(id, $('fichaPagosBody'));
 
   const seguimientoBody = $('fichaSeguimientoBody');
   seguimientoBody.innerHTML = renderSeguimientoBody(id);
@@ -2241,18 +2341,22 @@ function abrirFormularioPago(id, ec){
   $('pagoForm').classList.remove('hidden');
   $('pagoClienteId').value = id;
   $('pagoEstadoCuentaId').value = ec ? ec.id : '';
+  $('pagoFolioVinculado').value = ec ? ec.folioEC : '';
   $('pagoClienteNombre').textContent = c.nombre + (ec ? ' (desde estado de cuenta)' : '');
   if (ec) {
     // El estado de cuenta ya tiene su propio descuento/anticipo aplicados;
     // lo que se cobra ahora es el saldo restante (ec.monto).
-    $('pConcepto').value = (ec.concepto || '') + ` (pago de Estado de cuenta No. ${folioToText(ec.folioEC)})`;
+    $('pConcepto').value = (ec.concepto || '') + ` (pago de Estado de cuenta No. ${folioECTexto(ec.folioEC)})`;
     $('pMontoOriginal').value = ec.monto || '';
     $('pDescuento').value = 0;
+    $('pPeriodo').value = ec.periodo || '';
   } else {
     $('pConcepto').value = c.servicioDescripcion || c.servicio || '';
     $('pMontoOriginal').value = c.tipoCliente === 'recurrente' ? (c.montoMensual || '') : '';
     $('pDescuento').value = 0;
+    $('pPeriodo').value = '';
   }
+  $('pReferencia').value = '';
   $('pFecha').value = new Date().toISOString().slice(0,10);
   actualizarTotalPago();
   show($('pagoFormPanel'));
@@ -2268,6 +2372,7 @@ $('pagoForm').addEventListener('submit', (e) => {
   hide($('pagoFormError'));
   const clienteId = $('pagoClienteId').value;
   const ecId = $('pagoEstadoCuentaId').value;
+  const folioVinculado = $('pagoFolioVinculado').value;
   const c = clientesCache[clienteId];
   const conceptoDetallado = $('pConcepto').value.trim();
   const montoOriginal = Number($('pMontoOriginal').value) || 0;
@@ -2276,12 +2381,19 @@ $('pagoForm').addEventListener('submit', (e) => {
   const [y,m,d] = $('pFecha').value.split('-').map(Number);
   const fechaPago = new Date(y, m-1, d, 12, 0, 0);
   const metodoPago = $('pMetodo').value;
+  const periodo = $('pPeriodo').value.trim();
+  const referencia = $('pReferencia').value.trim();
 
-  obtenerSiguienteFolio().then(folio => {
+  // Si este pago viene de un estado de cuenta, el recibo se queda con EL
+  // MISMO número de folio (vinculados, fáciles de rastrear). Si es un pago
+  // directo, se le asigna el siguiente folio de la fila general.
+  const promesaFolio = folioVinculado ? Promise.resolve(Number(folioVinculado)) : obtenerSiguienteFolio();
+
+  promesaFolio.then(folio => {
     const pago = {
       clienteId, clienteNombre: c.nombre, servicio: c.servicio,
       conceptoDetallado, montoOriginal, descuento, monto,
-      fechaPago, metodoPago, folio,
+      fechaPago, metodoPago, folio, periodo, referencia,
       estadoCuentaId: ecId || null,
       generadoPor: currentUserDoc.email,
       creadoEn: firebase.firestore.FieldValue.serverTimestamp()
@@ -2289,7 +2401,7 @@ $('pagoForm').addEventListener('submit', (e) => {
     return db.collection('pagos').add(pago).then(() => pago);
   }).then(pago => {
     ultimoPagoGenerado = pago;
-    $('pagoFormOk').textContent = `Pago registrado — Recibo No. ${folioToText(pago.folio)}`;
+    $('pagoFormOk').textContent = `Pago registrado — Recibo No. ${folioRPTexto(pago.folio)}`;
     show($('pagoFormOk'));
     $('pagoForm').classList.add('hidden');
     show($('pagoListoActions'));
@@ -2314,18 +2426,10 @@ $('btnDescargarRecibo').addEventListener('click', () => {
   if (ultimoPagoGenerado) generarReciboPDF(ultimoPagoGenerado);
 });
 
-/* ---------- Estado de cuenta: se emite primero, el recibo se genera después del pago ---------- */
-function obtenerSiguienteFolioEC(){
-  const ref = db.collection('meta').doc('contadorEstadosCuenta');
-  return db.runTransaction(tx => {
-    return tx.get(ref).then(doc => {
-      const actual = doc.exists ? (doc.data().ultimoFolio || 0) : 0;
-      const siguiente = actual + 1;
-      tx.set(ref, { ultimoFolio: siguiente });
-      return siguiente;
-    });
-  });
-}
+/* ---------- Estado de cuenta: se emite primero, el recibo se genera después del pago ----------
+   Usa el MISMO contador de folios que los recibos (obtenerSiguienteFolio),
+   así nunca hay dos documentos distintos con el mismo número por coincidencia,
+   y cuando se liga un recibo a su estado de cuenta, comparten folio real. */
 
 function actualizarSaldoEC(){
   const original = Number($('ecMonto').value) || 0;
@@ -2345,13 +2449,18 @@ $('ecAnticipo').addEventListener('input', actualizarSaldoEC);
 
 function abrirFormularioEstadoCuenta(id){
   const c = clientesCache[id];
+  if (estadosCuentaPendientesPorCliente.has(id)) {
+    if (!confirm(`"${c.nombre}" ya tiene un estado de cuenta pendiente sin pagar. ¿Seguro que quieres generar otro? (Revisa "Pagos" en su tarjeta si solo quieres ver o reimprimir el que ya existe.)`)) return;
+  }
   hide($('estadoCuentaError'));
   hide($('estadoCuentaOk'));
+  hide($('ecListoActions'));
   $('estadoCuentaForm').reset();
   $('estadoCuentaForm').classList.remove('hidden');
   $('ecClienteId').value = id;
   $('ecClienteNombre').textContent = c.nombre;
   $('ecConcepto').value = c.servicioDescripcion || c.servicio || '';
+  $('ecPeriodo').value = '';
   $('ecMonto').value = c.tipoCliente === 'recurrente' ? (c.montoMensual || '') : '';
   $('ecDescuento').value = 0;
   $('ecAnticipo').value = 0;
@@ -2375,14 +2484,15 @@ $('estadoCuentaForm').addEventListener('submit', (e) => {
   const anticipo = Number($('ecAnticipo').value) || 0;
   const monto = Math.max(montoOriginal - descuento - anticipo, 0);
   const concepto = $('ecConcepto').value.trim() || c.servicio || 'Servicio';
+  const periodo = $('ecPeriodo').value.trim();
   const [y1,m1,d1] = $('ecFechaEmision').value.split('-').map(Number);
   const fechaEmision = new Date(y1, m1-1, d1, 12, 0, 0);
   const fechaVencimientoStr = $('ecFechaVencimiento').value || '';
 
-  obtenerSiguienteFolioEC().then(folioEC => {
+  obtenerSiguienteFolio().then(folioEC => {
     const ec = {
       clienteId, clienteNombre: c.nombre, servicio: c.servicio,
-      concepto, montoOriginal, descuento, anticipo, monto, fechaEmision,
+      concepto, periodo, montoOriginal, descuento, anticipo, monto, fechaEmision,
       fechaVencimiento: fechaVencimientoStr || null,
       folioEC, estatus: 'pendiente',
       generadoPor: currentUserDoc.email,
@@ -2390,58 +2500,83 @@ $('estadoCuentaForm').addEventListener('submit', (e) => {
     };
     return db.collection('estadosCuenta').add(ec).then(() => ec);
   }).then(ec => {
-    $('estadoCuentaOk').textContent = `Estado de cuenta No. ${folioToText(ec.folioEC)} generado — saldo a pagar ${formatearMoneda(ec.monto)}.`;
+    ultimoECGenerado = ec;
+    $('estadoCuentaOk').textContent = `Estado de cuenta No. ${folioECTexto(ec.folioEC)} generado — saldo a pagar ${formatearMoneda(ec.monto)}.`;
     show($('estadoCuentaOk'));
+    $('estadoCuentaForm').classList.add('hidden');
+    show($('ecListoActions'));
     generarEstadoCuentaPDF(ec);
   }).catch(err => {
     $('estadoCuentaError').textContent = err.message;
     show($('estadoCuentaError'));
   });
 });
+let ultimoECGenerado = null;
+$('btnDescargarEC').addEventListener('click', () => { if (ultimoECGenerado) generarEstadoCuentaPDF(ultimoECGenerado); });
+$('btnCerrarEC').addEventListener('click', () => hide($('estadoCuentaFormPanel')));
+
+const ESTATUS_EC_INFO = {
+  pendiente: { label:'PENDIENTE DE PAGO', color:[245,166,35] },
+  pagado:    { label:'PAGADO',            color:[46,204,113] },
+  vencido:   { label:'VENCIDO',           color:[229,9,20] }
+};
+function calcularEstatusEC(ec){
+  if (ec.estatus === 'pagado') return 'pagado';
+  const hoyStr = new Date().toISOString().slice(0,10);
+  if (ec.fechaVencimiento && ec.fechaVencimiento < hoyStr) return 'vencido';
+  return 'pendiente';
+}
 
 function generarEstadoCuentaPDF(ec){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const estatusKey = calcularEstatusEC(ec);
+  const estInfo = ESTATUS_EC_INFO[estatusKey];
 
+  // ---- Encabezado ----
   doc.setFillColor(229,9,20);
-  doc.rect(0,0,210,30,'F');
+  doc.rect(0,0,210,34,'F');
+  doc.addImage(BRAVO_LOGO_BASE64, 'PNG', 15, 10, 46, 23);
   doc.setTextColor(255,255,255);
   doc.setFont('helvetica','bold');
-  doc.setFontSize(22);
-  doc.text('BRAVO AGENCY', 15, 19);
+  doc.setFontSize(16);
+  doc.text('ESTADO DE CUENTA', 195, 16, { align:'right' });
   doc.setFont('helvetica','normal');
-  doc.setFontSize(10);
-  doc.text('Estado de cuenta', 15, 25);
+  doc.setFontSize(9.5);
+  doc.text(`Folio: ${folioECTexto(ec.folioEC)}`, 195, 23, { align:'right' });
+  doc.text(`Fecha de emisión: ${formatearFecha(ec.fechaEmision)}`, 195, 29, { align:'right' });
 
+  // ---- Badge de estatus ----
+  let y = 47;
   doc.setFont('helvetica','bold');
-  doc.setFontSize(12);
-  doc.text(`Estado de cuenta No. ${folioToText(ec.folioEC)}`, 195, 19, { align:'right' });
-  doc.setFont('helvetica','normal');
   doc.setFontSize(10);
-  doc.text(formatearFecha(ec.fechaEmision), 195, 25, { align:'right' });
+  const textW = doc.getTextWidth(estInfo.label);
+  const badgeW = textW + 14;
+  doc.setFillColor(estInfo.color[0], estInfo.color[1], estInfo.color[2]);
+  doc.roundedRect(15, y-6, badgeW, 9, 2, 2, 'F');
+  doc.setTextColor(255,255,255);
+  doc.text(estInfo.label, 15 + badgeW/2, y, { align:'center' });
 
-  let y = 48;
+  // ---- Datos principales ----
+  y += 14;
   doc.setTextColor(30,30,30);
-  doc.setFontSize(11);
-  doc.setFont('helvetica','bold');
-  doc.text('Cliente:', 15, y);
-  doc.setFont('helvetica','normal');
-  doc.text(String(ec.clienteNombre || '—'), 70, y);
-  y += 10;
+  const fila = (label, value) => {
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10.5);
+    doc.text(label, 15, y);
+    doc.setFont('helvetica','normal');
+    const lineas = doc.splitTextToSize(String(value || '—'), 110);
+    doc.text(lineas, 70, y);
+    y += Math.max(lineas.length * 5.5, 7.5);
+  };
+  fila('Cliente:', ec.clienteNombre);
+  fila('Servicio contratado:', ec.servicio);
+  fila('Descripción:', ec.concepto);
+  if (ec.periodo) fila('Periodo cubierto:', ec.periodo);
+  fila('Fecha límite de pago:', ec.fechaVencimiento ? formatearFechaPlana(ec.fechaVencimiento) : 'Sin fecha límite');
+  if (estatusKey === 'pagado' && ec.fechaPago) fila('Fecha de pago:', formatearFecha(ec.fechaPago));
 
-  doc.setFont('helvetica','bold');
-  doc.text('Concepto:', 15, y);
-  doc.setFont('helvetica','normal');
-  const conceptoLineas = doc.splitTextToSize(String(ec.concepto || '—'), 115);
-  doc.text(conceptoLineas, 70, y);
-  y += Math.max(conceptoLineas.length * 6, 10);
-
-  doc.setFont('helvetica','bold');
-  doc.text('Fecha límite de pago:', 15, y);
-  doc.setFont('helvetica','normal');
-  doc.text(String(ec.fechaVencimiento || 'Sin fecha límite'), 70, y);
-  y += 10;
-
+  // ---- Tabla de servicio / totales ----
   y += 4;
   doc.setDrawColor(220,220,220);
   doc.line(15, y, 195, y);
@@ -2463,15 +2598,49 @@ function generarEstadoCuentaPDF(ec){
   doc.line(15, y, 195, y);
   y += 11;
   doc.setFontSize(13);
-  filaMonto('Saldo a pagar', formatearMoneda(ec.monto), true);
+  filaMonto('Total a pagar', formatearMoneda(ec.monto), true);
+  y += 8;
 
-  y += 18;
+  // ---- Datos bancarios — solo si está pendiente o vencido ----
+  if (estatusKey !== 'pagado') {
+    doc.setFillColor(245,245,245);
+    doc.roundedRect(15, y, 180, 33, 3, 3, 'F');
+    let yb = y + 8;
+    doc.setTextColor(30,30,30);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10.5);
+    doc.text('Datos para realizar tu pago', 20, yb);
+    yb += 7;
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9.5);
+    doc.text(`${BRAVO_BANCO.banco}  ·  ${BRAVO_BANCO.titular}`, 20, yb); yb += 6;
+    doc.text(`No. de tarjeta: ${BRAVO_BANCO.tarjeta}`, 20, yb); yb += 6;
+    doc.text(`Cuenta CLABE: ${BRAVO_BANCO.clabe}`, 20, yb);
+    y += 41;
+  } else {
+    y += 4;
+  }
+
+  // ---- Pie: dirección + nota legal ----
+  doc.setDrawColor(230,230,230);
+  doc.line(15, y, 195, y);
+  y += 8;
   doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  doc.setTextColor(140,140,140);
-  doc.text('Este documento es informativo. El recibo de pago se generará al confirmar tu pago.', 15, y);
+  doc.setFontSize(8.5);
+  doc.setTextColor(120,120,120);
+  doc.text(BRAVO_DIRECCION, 15, y);
+  y += 6;
+  const notaLineas = doc.splitTextToSize(NOTA_LEGAL, 180);
+  doc.text(notaLineas, 15, y);
+  y += notaLineas.length * 4.3 + 2;
+  if (estatusKey !== 'pagado') {
+    doc.setTextColor(229,9,20);
+    doc.setFont('helvetica','bold');
+    const notaPagoLineas = doc.splitTextToSize(NOTA_PENDIENTE_PAGO, 180);
+    doc.text(notaPagoLineas, 15, y);
+  }
 
-  doc.save(`EstadoDeCuenta-${folioToText(ec.folioEC)}-${(ec.clienteNombre||'cliente').replace(/[^a-z0-9]+/gi,'-')}.pdf`);
+  doc.save(`EstadoDeCuenta-${folioECTexto(ec.folioEC)}-${(ec.clienteNombre||'cliente').replace(/[^a-z0-9]+/gi,'-')}.pdf`);
 }
 
 /* ---------- Recibo en PDF, brandeado Bravo Agency ---------- */
@@ -2479,45 +2648,36 @@ function generarReciboPDF(pago){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
 
+  // ---- Encabezado ----
   doc.setFillColor(229,9,20);
-  doc.rect(0,0,210,30,'F');
+  doc.rect(0,0,210,34,'F');
+  doc.addImage(BRAVO_LOGO_BASE64, 'PNG', 15, 10, 46, 23);
   doc.setTextColor(255,255,255);
   doc.setFont('helvetica','bold');
-  doc.setFontSize(22);
-  doc.text('BRAVO AGENCY', 15, 19);
+  doc.setFontSize(16);
+  doc.text('RECIBO DE PAGO', 195, 16, { align:'right' });
   doc.setFont('helvetica','normal');
-  doc.setFontSize(10);
-  doc.text('Recibo de pago', 15, 25);
+  doc.setFontSize(9.5);
+  doc.text(`Folio: ${folioRPTexto(pago.folio)}`, 195, 23, { align:'right' });
+  doc.text(`Fecha de emisión: ${formatearFecha(pago.fechaPago)}`, 195, 29, { align:'right' });
 
-  doc.setFont('helvetica','bold');
-  doc.setFontSize(12);
-  doc.text(`Recibo No. ${folioToText(pago.folio)}`, 195, 19, { align:'right' });
-  doc.setFont('helvetica','normal');
-  doc.setFontSize(10);
-  doc.text(formatearFecha(pago.fechaPago), 195, 25, { align:'right' });
-
-  let y = 48;
+  let y = 47;
   doc.setTextColor(30,30,30);
-  doc.setFontSize(11);
-  doc.setFont('helvetica','bold');
-  doc.text('Cliente:', 15, y);
-  doc.setFont('helvetica','normal');
-  doc.text(String(pago.clienteNombre || '—'), 70, y);
-  y += 10;
-
-  doc.setFont('helvetica','bold');
-  doc.text('Concepto:', 15, y);
-  doc.setFont('helvetica','normal');
-  const conceptoTexto = pago.conceptoDetallado || pago.servicio || '—';
-  const conceptoLineas = doc.splitTextToSize(String(conceptoTexto), 115);
-  doc.text(conceptoLineas, 70, y);
-  y += Math.max(conceptoLineas.length * 6, 10);
-
-  doc.setFont('helvetica','bold');
-  doc.text('Método de pago:', 15, y);
-  doc.setFont('helvetica','normal');
-  doc.text(String(pago.metodoPago || '—'), 70, y);
-  y += 10;
+  const fila = (label, value) => {
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10.5);
+    doc.text(label, 15, y);
+    doc.setFont('helvetica','normal');
+    const lineas = doc.splitTextToSize(String(value || '—'), 110);
+    doc.text(lineas, 70, y);
+    y += Math.max(lineas.length * 5.5, 7.5);
+  };
+  fila('Cliente:', pago.clienteNombre);
+  fila('Servicio contratado:', pago.servicio || pago.conceptoDetallado);
+  if (pago.periodo) fila('Periodo cubierto:', pago.periodo);
+  fila('Fecha de pago:', formatearFecha(pago.fechaPago));
+  fila('Método de pago:', pago.metodoPago);
+  if (pago.referencia) fila('Referencia:', pago.referencia);
 
   y += 4;
   doc.setDrawColor(220,220,220);
@@ -2541,15 +2701,22 @@ function generarReciboPDF(pago){
     y += 11;
   }
   doc.setFontSize(13);
-  filaMonto('Total pagado', formatearMoneda(pago.monto), true);
+  filaMonto('Monto pagado', formatearMoneda(pago.monto), true);
+  y += 12;
 
-  y += 18;
+  // ---- Pie: dirección + nota legal (sin datos bancarios — ya está pagado) ----
+  doc.setDrawColor(230,230,230);
+  doc.line(15, y, 195, y);
+  y += 8;
   doc.setFont('helvetica','normal');
-  doc.setFontSize(9);
-  doc.setTextColor(140,140,140);
-  doc.text('Gracias por tu pago. Recibo de carácter informativo, sin valor fiscal.', 15, y);
+  doc.setFontSize(8.5);
+  doc.setTextColor(120,120,120);
+  doc.text(BRAVO_DIRECCION, 15, y);
+  y += 6;
+  const notaLineas = doc.splitTextToSize(NOTA_LEGAL, 180);
+  doc.text(notaLineas, 15, y);
 
-  doc.save(`Recibo-${folioToText(pago.folio)}-${(pago.clienteNombre||'cliente').replace(/[^a-z0-9]+/gi,'-')}.pdf`);
+  doc.save(`Recibo-${folioRPTexto(pago.folio)}-${(pago.clienteNombre||'cliente').replace(/[^a-z0-9]+/gi,'-')}.pdf`);
 }
 
 /* ======================================================
@@ -2599,6 +2766,7 @@ $('dashFiltro').addEventListener('change', () => {
 $('btnAplicarFiltro').addEventListener('click', () => { cargarResumenFinanciero(); cargarFlujoClientes(); });
 
 let chartFlujo = null;
+let chartResumenMes = null;
 const MESES_CORTOS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 function formatearMesLabel(clave){
   const [y,m] = clave.split('-').map(Number);
@@ -2811,6 +2979,28 @@ function renderResumenPorMes(pagosSnap, gastosSnap){
     return;
   }
   show($('resumenPorMesWrap'));
+  const etiquetas = meses.map(formatearMesLabel);
+
+  if (chartResumenMes) chartResumenMes.destroy();
+  chartResumenMes = new Chart($('chartResumenPorMes'), {
+    type: 'bar',
+    data: {
+      labels: etiquetas,
+      datasets: [
+        { label:'Ingresos', data: meses.map(m => buckets[m].ingresos), backgroundColor:'#2ECC71' },
+        { label:'Gastos', data: meses.map(m => buckets[m].gastos), backgroundColor:'#E50914' }
+      ]
+    },
+    options: {
+      responsive:true,
+      plugins:{ legend:{ position:'bottom', labels:{ color:'#9A9A9A', boxWidth:12, font:{ size:11 } } } },
+      scales:{
+        x:{ ticks:{ color:'#9A9A9A' }, grid:{ display:false } },
+        y:{ ticks:{ color:'#9A9A9A', callback:(v) => formatearMoneda(v) }, grid:{ color:'#2A2A2A' } }
+      }
+    }
+  });
+
   $('resumenPorMesBody').innerHTML = meses.map(m => {
     const d = buckets[m];
     const u = d.ingresos - d.gastos;
@@ -2847,7 +3037,7 @@ function renderTablaIngresos(pagosSnap){
       <td title="${(p.conceptoDetallado||'').replace(/"/g,'&quot;')}">${p.servicio||''}</td>
       <td>${formatearMoneda(p.monto)}</td>
       <td>${p.metodoPago||'—'}</td>
-      <td>${folioToText(p.folio)}</td>
+      <td>${folioRPTexto(p.folio)}</td>
       <td>
         <button class="btn btn-secondary btn-sm" data-action="pdf">PDF</button>
         <button class="btn btn-secondary btn-sm" data-action="editar">Editar</button>
@@ -2877,7 +3067,7 @@ function habilitarEdicionIngreso(tr, pago){
     <td><input type="text" value="${(pago.servicio||'').replace(/"/g,'&quot;')}" id="es-${pago.id}" style="padding:6px; font-size:12px; width:120px;"></td>
     <td><input type="number" step="0.01" value="${pago.monto}" id="em-${pago.id}" style="padding:6px; font-size:12px; width:100px;"></td>
     <td><select id="emp-${pago.id}" style="padding:6px; font-size:12px;">${metodos.map(m => `<option value="${m}" ${pago.metodoPago===m?'selected':''}>${m}</option>`).join('')}</select></td>
-    <td>${folioToText(pago.folio)}</td>
+    <td>${folioRPTexto(pago.folio)}</td>
     <td>
       <button class="btn btn-secondary btn-sm" data-action="guardar">Guardar</button>
       <button class="btn btn-secondary btn-sm" data-action="cancelar">Cancelar</button>
