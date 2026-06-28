@@ -130,6 +130,7 @@
   .btn-danger{background:transparent; border:1px solid var(--red-dim); color:#ff8b91;}
   .btn-danger:hover{background:rgba(229,9,20,0.12); border-color:var(--red);}
   .tab-active{background:var(--red) !important; border-color:var(--red) !important; color:var(--white) !important;}
+  .btn-link-num{background:none; border:none; padding:0; font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; width:auto;}
   .auth-error{
     background:rgba(229,9,20,0.12);
     border:1px solid var(--red-dim);
@@ -586,13 +587,18 @@
         <div class="chart-card">
           <h3>Ganados vs. perdidos por mes</h3>
           <canvas id="chartFlujoClientes"></canvas>
+          <p class="page-sub" style="margin:8px 0 0; font-size:11px;">Tip: dale clic a una barra, o al número en la tabla de abajo, para ver quiénes son.</p>
         </div>
       </div>
-      <div class="table-wrap" style="margin-bottom:28px;">
+      <div class="table-wrap" style="margin-bottom:14px;">
         <table class="proj-table">
           <thead><tr><th>Mes</th><th>Ganados</th><th>Perdidos</th><th>Neto</th></tr></thead>
           <tbody id="flujoClientesMesBody"><tr><td colspan="4" style="color:var(--muted);">Cargando…</td></tr></tbody>
         </table>
+      </div>
+      <div class="panel hidden" id="flujoClientesDetalle" style="margin-bottom:28px;">
+        <h2 id="flujoClientesDetalleTitulo" style="margin:0 0 12px;">—</h2>
+        <div id="flujoClientesDetalleLista"></div>
       </div>
 
       <div class="charts-grid">
@@ -2595,13 +2601,15 @@ function formatearMesLabel(clave){
   return `${MESES_CORTOS[m-1]} ${y}`;
 }
 
+let bucketsFlujoClientes = {}; // se guarda para poder consultar el detalle al hacer clic
+
 function cargarFlujoClientes(){
   const { inicio, fin } = calcularRangoFecha();
   const inicioStr = inicio.toISOString().slice(0,10);
   const finStr = fin.toISOString().slice(0,10);
 
   db.collection('clientes').get().then(snap => {
-    const todos = snap.docs.map(d => d.data());
+    const todos = snap.docs.map(d => Object.assign({ id:d.id }, d.data()));
     // Clientes creados antes de que existiera el campo "Fecha de alta" no lo
     // tienen guardado — para esos usamos la fecha real de creación del registro.
     todos.forEach(c => { if (!c.fechaAlta && c.creadoEn) c.fechaAlta = fechaComo(c.creadoEn).toISOString().slice(0,10); });
@@ -2617,10 +2625,10 @@ function cargarFlujoClientes(){
     $('flujoNeto').textContent = (neto > 0 ? '+' : '') + neto;
     $('flujoNeto').className = 'metric-value' + (neto < 0 ? ' accent-red' : neto > 0 ? ' accent-green' : '');
 
-    const buckets = {};
-    ganados.forEach(c => { const m = c.fechaAlta.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].ganados++; });
-    perdidos.forEach(c => { const m = c.fechaCancelacion.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].perdidos++; });
-    const meses = Object.keys(buckets).sort();
+    bucketsFlujoClientes = {};
+    ganados.forEach(c => { const m = c.fechaAlta.slice(0,7); bucketsFlujoClientes[m] = bucketsFlujoClientes[m] || { ganados:[], perdidos:[] }; bucketsFlujoClientes[m].ganados.push(c); });
+    perdidos.forEach(c => { const m = c.fechaCancelacion.slice(0,7); bucketsFlujoClientes[m] = bucketsFlujoClientes[m] || { ganados:[], perdidos:[] }; bucketsFlujoClientes[m].perdidos.push(c); });
+    const meses = Object.keys(bucketsFlujoClientes).sort();
     const etiquetas = meses.map(formatearMesLabel);
 
     if (chartFlujo) chartFlujo.destroy();
@@ -2629,12 +2637,19 @@ function cargarFlujoClientes(){
       data: {
         labels: meses.length ? etiquetas : ['Sin movimiento en este periodo'],
         datasets: [
-          { label:'Ganados', data: meses.map(m => buckets[m].ganados), backgroundColor:'#2ECC71' },
-          { label:'Perdidos', data: meses.map(m => buckets[m].perdidos), backgroundColor:'#E50914' }
+          { label:'Ganados', data: meses.map(m => bucketsFlujoClientes[m].ganados.length), backgroundColor:'#2ECC71' },
+          { label:'Perdidos', data: meses.map(m => bucketsFlujoClientes[m].perdidos.length), backgroundColor:'#E50914' }
         ]
       },
       options: {
         responsive:true,
+        onClick: (evt, elementos) => {
+          if (!elementos.length) return;
+          const el = elementos[0];
+          const mes = meses[el.index];
+          const tipo = el.datasetIndex === 0 ? 'ganados' : 'perdidos';
+          mostrarDetalleFlujoMes(mes, tipo);
+        },
         plugins:{ legend:{ position:'bottom', labels:{ color:'#9A9A9A', boxWidth:12, font:{ size:11 } } } },
         scales:{ x:{ ticks:{ color:'#9A9A9A' }, grid:{ display:false } }, y:{ ticks:{ color:'#9A9A9A', stepSize:1 }, grid:{ color:'#2A2A2A' } } }
       }
@@ -2642,12 +2657,54 @@ function cargarFlujoClientes(){
 
     const filasTabla = meses.length
       ? meses.map((m,i) => {
-          const g = buckets[m].ganados, p = buckets[m].perdidos, n = g - p;
-          return `<tr><td>${etiquetas[i]}</td><td>${g}</td><td>${p}</td><td style="color:${n<0?'#ff8b91':n>0?'var(--green)':'inherit'};">${n>0?'+':''}${n}</td></tr>`;
+          const g = bucketsFlujoClientes[m].ganados.length, p = bucketsFlujoClientes[m].perdidos.length, n = g - p;
+          return `<tr>
+            <td>${etiquetas[i]}</td>
+            <td>${g ? `<button type="button" class="btn-link-num" style="color:var(--green);" data-mes="${m}" data-tipo="ganados">${g}</button>` : '0'}</td>
+            <td>${p ? `<button type="button" class="btn-link-num" style="color:#ff8b91;" data-mes="${m}" data-tipo="perdidos">${p}</button>` : '0'}</td>
+            <td style="color:${n<0?'#ff8b91':n>0?'var(--green)':'inherit'};">${n>0?'+':''}${n}</td>
+          </tr>`;
         }).join('')
       : '<tr><td colspan="4" style="color:var(--muted);">Sin movimiento en este periodo.</td></tr>';
     $('flujoClientesMesBody').innerHTML = filasTabla;
+    $('flujoClientesMesBody').querySelectorAll('[data-mes]').forEach(btn => {
+      btn.addEventListener('click', () => mostrarDetalleFlujoMes(btn.dataset.mes, btn.dataset.tipo));
+    });
+    hide($('flujoClientesDetalle'));
   });
+}
+
+/* Despliega, debajo de la tabla, quiénes son los clientes ganados/perdidos
+   de un mes en particular — se activa al hacer clic en el número de la
+   tabla o en una barra de la gráfica. */
+let detalleFlujoActual = null;
+function mostrarDetalleFlujoMes(mes, tipo){
+  if (detalleFlujoActual === mes + '-' + tipo) { hide($('flujoClientesDetalle')); detalleFlujoActual = null; return; }
+  detalleFlujoActual = mes + '-' + tipo;
+  const lista = (bucketsFlujoClientes[mes] && bucketsFlujoClientes[mes][tipo]) || [];
+  const titulo = tipo === 'ganados' ? 'Clientes ganados' : 'Clientes perdidos';
+
+  $('flujoClientesDetalleTitulo').textContent = `${titulo} — ${formatearMesLabel(mes)}`;
+  $('flujoClientesDetalleLista').innerHTML = lista.length ? lista.map(c => `
+    <div class="pago-row">
+      <span>
+        <strong>${c.nombre || '(sin nombre)'}</strong>
+        ${tipo === 'ganados' ? ` · ${c.servicio || 'Sin servicio'}` : ''}
+        ${tipo === 'perdidos' && c.razonCancelacion ? `<br><span class="page-sub" style="margin:0;">${c.razonCancelacion}</span>` : ''}
+      </span>
+      <button type="button" class="btn btn-secondary btn-sm" data-verficha="${c.id}">Ver ficha</button>
+    </div>
+  `).join('') : '<p class="page-sub" style="margin:0;">Sin registros.</p>';
+
+  $('flujoClientesDetalleLista').querySelectorAll('[data-verficha]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      irAPagina('clientes');
+      abrirFichaCliente(btn.dataset.verficha);
+    });
+  });
+
+  show($('flujoClientesDetalle'));
+  $('flujoClientesDetalle').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 
 function cargarDashboardCompleto(){
