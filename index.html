@@ -564,15 +564,19 @@
       </div>
 
       <h2 class="section-title">Clientes ganados y perdidos</h2>
-      <p class="page-sub" style="margin-top:-6px;">Usa el mismo filtro de fecha de arriba. "Ganado" = entró como cliente (desde el CRM o registro directo). "Perdido" = un cliente activo que se canceló (desertor), no se refiere a leads perdidos del CRM.</p>
+      <p class="page-sub" style="margin-top:-6px;">Usa el mismo filtro de fecha de arriba. "Ganado" = entró como cliente (desde el CRM o registro directo). "Perdido" = un cliente activo que se canceló (desertor), no se refiere a leads perdidos del CRM. Los de pago único (logo, campaña, proyecto) se cuentan aparte — no entran al MRR.</p>
       <div class="cards-grid">
         <div class="metric-card">
           <div class="metric-label">Clientes activos ahora</div>
           <div class="metric-value" id="flujoActivos">—</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Ganados en el periodo</div>
-          <div class="metric-value accent-green" id="flujoGanados">—</div>
+          <div class="metric-label">Ganados recurrentes</div>
+          <div class="metric-value accent-green" id="flujoGanadosRec">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Ganados único / proyecto</div>
+          <div class="metric-value" id="flujoGanadosUnico" style="color:#3B82F6;">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Perdidos en el periodo</div>
@@ -592,8 +596,8 @@
       </div>
       <div class="table-wrap" style="margin-bottom:14px;">
         <table class="proj-table">
-          <thead><tr><th>Mes</th><th>Ganados</th><th>Perdidos</th><th>Neto</th></tr></thead>
-          <tbody id="flujoClientesMesBody"><tr><td colspan="4" style="color:var(--muted);">Cargando…</td></tr></tbody>
+          <thead><tr><th>Mes</th><th>Ganados (recurrente)</th><th>Ganados (único)</th><th>Perdidos</th><th>Neto</th></tr></thead>
+          <tbody id="flujoClientesMesBody"><tr><td colspan="5" style="color:var(--muted);">Cargando…</td></tr></tbody>
         </table>
       </div>
       <div class="panel hidden" id="flujoClientesDetalle" style="margin-bottom:28px;">
@@ -2608,26 +2612,45 @@ function cargarFlujoClientes(){
   const inicioStr = inicio.toISOString().slice(0,10);
   const finStr = fin.toISOString().slice(0,10);
 
-  db.collection('clientes').get().then(snap => {
+  Promise.all([
+    db.collection('clientes').get(),
+    db.collection('pagos').where('fechaPago','>=', inicio).where('fechaPago','<', fin).get()
+  ]).then(([snap, pagosSnap]) => {
     const todos = snap.docs.map(d => Object.assign({ id:d.id }, d.data()));
     // Clientes creados antes de que existiera el campo "Fecha de alta" no lo
     // tienen guardado — para esos usamos la fecha real de creación del registro.
     todos.forEach(c => { if (!c.fechaAlta && c.creadoEn) c.fechaAlta = fechaComo(c.creadoEn).toISOString().slice(0,10); });
+    const tipoPorCliente = {};
+    todos.forEach(c => { tipoPorCliente[c.id] = c.tipoCliente; });
 
     const activos = todos.filter(c => clienteEsActivo(c)).length;
-    const ganados = todos.filter(c => c.fechaAlta && c.fechaAlta >= inicioStr && c.fechaAlta < finStr);
-    const perdidos = todos.filter(c => c.estatus === 'cancelado' && c.fechaCancelacion && c.fechaCancelacion >= inicioStr && c.fechaCancelacion < finStr);
-    const neto = ganados.length - perdidos.length;
+    // "Ganado recurrente" = un evento único en la vida del cliente: cuando
+    // arrancó la relación (fecha de alta). No vuelve a contarse aunque pague mes con mes.
+    const ganadosRec = todos.filter(c => c.tipoCliente === 'recurrente' && c.fechaAlta && c.fechaAlta >= inicioStr && c.fechaAlta < finStr);
+    // "Perdido" solo aplica a recurrentes (un proyecto de pago único no se
+    // "cancela", simplemente no se repite).
+    const perdidos = todos.filter(c => c.tipoCliente === 'recurrente' && c.estatus === 'cancelado' && c.fechaCancelacion && c.fechaCancelacion >= inicioStr && c.fechaCancelacion < finStr);
+    // "Proyecto ganado (no recurrente)" = cada PAGO de un cliente de pago
+    // único cuenta como una venta nueva — si el mismo cliente vuelve a
+    // contratar en otro momento, ese segundo pago cuenta aparte, aunque su
+    // ficha ya exista desde antes.
+    const proyectos = pagosSnap.docs.map(d => Object.assign({ id:d.id }, d.data())).filter(p => tipoPorCliente[p.clienteId] === 'unico');
+
+    const neto = ganadosRec.length - perdidos.length;
 
     $('flujoActivos').textContent = activos;
-    $('flujoGanados').textContent = ganados.length;
+    $('flujoGanadosRec').textContent = ganadosRec.length;
+    $('flujoGanadosUnico').textContent = proyectos.length;
     $('flujoPerdidos').textContent = perdidos.length;
     $('flujoNeto').textContent = (neto > 0 ? '+' : '') + neto;
     $('flujoNeto').className = 'metric-value' + (neto < 0 ? ' accent-red' : neto > 0 ? ' accent-green' : '');
 
     bucketsFlujoClientes = {};
-    ganados.forEach(c => { const m = c.fechaAlta.slice(0,7); bucketsFlujoClientes[m] = bucketsFlujoClientes[m] || { ganados:[], perdidos:[] }; bucketsFlujoClientes[m].ganados.push(c); });
-    perdidos.forEach(c => { const m = c.fechaCancelacion.slice(0,7); bucketsFlujoClientes[m] = bucketsFlujoClientes[m] || { ganados:[], perdidos:[] }; bucketsFlujoClientes[m].perdidos.push(c); });
+    const asegurarBucket = (m) => { bucketsFlujoClientes[m] = bucketsFlujoClientes[m] || { ganados:[], proyectos:[], perdidos:[] }; return bucketsFlujoClientes[m]; };
+    ganadosRec.forEach(c => asegurarBucket(c.fechaAlta.slice(0,7)).ganados.push(c));
+    perdidos.forEach(c => asegurarBucket(c.fechaCancelacion.slice(0,7)).perdidos.push(c));
+    proyectos.forEach(p => asegurarBucket(fechaComo(p.fechaPago).toISOString().slice(0,7)).proyectos.push(p));
+
     const meses = Object.keys(bucketsFlujoClientes).sort();
     const etiquetas = meses.map(formatearMesLabel);
 
@@ -2637,7 +2660,8 @@ function cargarFlujoClientes(){
       data: {
         labels: meses.length ? etiquetas : ['Sin movimiento en este periodo'],
         datasets: [
-          { label:'Ganados', data: meses.map(m => bucketsFlujoClientes[m].ganados.length), backgroundColor:'#2ECC71' },
+          { label:'Ganados (recurrentes)', data: meses.map(m => bucketsFlujoClientes[m].ganados.length), backgroundColor:'#2ECC71' },
+          { label:'Proyectos (no recurrentes)', data: meses.map(m => bucketsFlujoClientes[m].proyectos.length), backgroundColor:'#3B82F6' },
           { label:'Perdidos', data: meses.map(m => bucketsFlujoClientes[m].perdidos.length), backgroundColor:'#E50914' }
         ]
       },
@@ -2647,7 +2671,7 @@ function cargarFlujoClientes(){
           if (!elementos.length) return;
           const el = elementos[0];
           const mes = meses[el.index];
-          const tipo = el.datasetIndex === 0 ? 'ganados' : 'perdidos';
+          const tipo = ['ganados','proyectos','perdidos'][el.datasetIndex];
           mostrarDetalleFlujoMes(mes, tipo);
         },
         plugins:{ legend:{ position:'bottom', labels:{ color:'#9A9A9A', boxWidth:12, font:{ size:11 } } } },
@@ -2657,15 +2681,16 @@ function cargarFlujoClientes(){
 
     const filasTabla = meses.length
       ? meses.map((m,i) => {
-          const g = bucketsFlujoClientes[m].ganados.length, p = bucketsFlujoClientes[m].perdidos.length, n = g - p;
+          const g = bucketsFlujoClientes[m].ganados.length, pr = bucketsFlujoClientes[m].proyectos.length, p = bucketsFlujoClientes[m].perdidos.length, n = g - p;
           return `<tr>
             <td>${etiquetas[i]}</td>
             <td>${g ? `<button type="button" class="btn-link-num" style="color:var(--green);" data-mes="${m}" data-tipo="ganados">${g}</button>` : '0'}</td>
+            <td>${pr ? `<button type="button" class="btn-link-num" style="color:#5B9BFF;" data-mes="${m}" data-tipo="proyectos">${pr}</button>` : '0'}</td>
             <td>${p ? `<button type="button" class="btn-link-num" style="color:#ff8b91;" data-mes="${m}" data-tipo="perdidos">${p}</button>` : '0'}</td>
             <td style="color:${n<0?'#ff8b91':n>0?'var(--green)':'inherit'};">${n>0?'+':''}${n}</td>
           </tr>`;
         }).join('')
-      : '<tr><td colspan="4" style="color:var(--muted);">Sin movimiento en este periodo.</td></tr>';
+      : '<tr><td colspan="5" style="color:var(--muted);">Sin movimiento en este periodo.</td></tr>';
     $('flujoClientesMesBody').innerHTML = filasTabla;
     $('flujoClientesMesBody').querySelectorAll('[data-mes]').forEach(btn => {
       btn.addEventListener('click', () => mostrarDetalleFlujoMes(btn.dataset.mes, btn.dataset.tipo));
@@ -2674,27 +2699,40 @@ function cargarFlujoClientes(){
   });
 }
 
-/* Despliega, debajo de la tabla, quiénes son los clientes ganados/perdidos
-   de un mes en particular — se activa al hacer clic en el número de la
-   tabla o en una barra de la gráfica. */
+/* Despliega, debajo de la tabla, quiénes son los clientes/proyectos
+   ganados/perdidos de un mes en particular — se activa al hacer clic en el
+   número de la tabla o en una barra de la gráfica. */
 let detalleFlujoActual = null;
 function mostrarDetalleFlujoMes(mes, tipo){
   if (detalleFlujoActual === mes + '-' + tipo) { hide($('flujoClientesDetalle')); detalleFlujoActual = null; return; }
   detalleFlujoActual = mes + '-' + tipo;
   const lista = (bucketsFlujoClientes[mes] && bucketsFlujoClientes[mes][tipo]) || [];
-  const titulo = tipo === 'ganados' ? 'Clientes ganados' : 'Clientes perdidos';
+  const titulos = { ganados:'Clientes ganados (recurrentes)', proyectos:'Proyectos ganados (no recurrentes)', perdidos:'Clientes perdidos' };
 
-  $('flujoClientesDetalleTitulo').textContent = `${titulo} — ${formatearMesLabel(mes)}`;
-  $('flujoClientesDetalleLista').innerHTML = lista.length ? lista.map(c => `
-    <div class="pago-row">
-      <span>
-        <strong>${c.nombre || '(sin nombre)'}</strong>
-        ${tipo === 'ganados' ? ` · ${c.servicio || 'Sin servicio'}` : ''}
-        ${tipo === 'perdidos' && c.razonCancelacion ? `<br><span class="page-sub" style="margin:0;">${c.razonCancelacion}</span>` : ''}
-      </span>
-      <button type="button" class="btn btn-secondary btn-sm" data-verficha="${c.id}">Ver ficha</button>
-    </div>
-  `).join('') : '<p class="page-sub" style="margin:0;">Sin registros.</p>';
+  $('flujoClientesDetalleTitulo').textContent = `${titulos[tipo]} — ${formatearMesLabel(mes)}`;
+
+  if (tipo === 'proyectos') {
+    $('flujoClientesDetalleLista').innerHTML = lista.length ? lista.map(p => `
+      <div class="pago-row">
+        <span>
+          <strong>${p.clienteNombre || '(sin nombre)'}</strong> · ${p.servicio || p.conceptoDetallado || 'Sin servicio'}
+          <br><span class="page-sub" style="margin:0;">${formatearFecha(p.fechaPago)} · ${formatearMoneda(p.monto)}</span>
+        </span>
+        <button type="button" class="btn btn-secondary btn-sm" data-verficha="${p.clienteId}">Ver ficha</button>
+      </div>
+    `).join('') : '<p class="page-sub" style="margin:0;">Sin registros.</p>';
+  } else {
+    $('flujoClientesDetalleLista').innerHTML = lista.length ? lista.map(c => `
+      <div class="pago-row">
+        <span>
+          <strong>${c.nombre || '(sin nombre)'}</strong>
+          ${tipo === 'ganados' ? ` · ${c.servicio || 'Sin servicio'}` : ''}
+          ${tipo === 'perdidos' && c.razonCancelacion ? `<br><span class="page-sub" style="margin:0;">${c.razonCancelacion}</span>` : ''}
+        </span>
+        <button type="button" class="btn btn-secondary btn-sm" data-verficha="${c.id}">Ver ficha</button>
+      </div>
+    `).join('') : '<p class="page-sub" style="margin:0;">Sin registros.</p>';
+  }
 
   $('flujoClientesDetalleLista').querySelectorAll('[data-verficha]').forEach(btn => {
     btn.addEventListener('click', () => {
