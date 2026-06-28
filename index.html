@@ -588,6 +588,12 @@
           <canvas id="chartFlujoClientes"></canvas>
         </div>
       </div>
+      <div class="table-wrap" style="margin-bottom:28px;">
+        <table class="proj-table">
+          <thead><tr><th>Mes</th><th>Ganados</th><th>Perdidos</th><th>Neto</th></tr></thead>
+          <tbody id="flujoClientesMesBody"><tr><td colspan="4" style="color:var(--muted);">Cargando…</td></tr></tbody>
+        </table>
+      </div>
 
       <div class="charts-grid">
         <div class="chart-card">
@@ -597,6 +603,17 @@
         <div class="chart-card">
           <h3>Gastos por categoría</h3>
           <canvas id="chartGastosCategoria"></canvas>
+        </div>
+      </div>
+
+      <div id="resumenPorMesWrap" class="hidden">
+        <h2 class="section-title">Ingresos, gastos y utilidad por mes</h2>
+        <p class="page-sub" style="margin-top:-6px;">Aparece solo cuando el periodo filtrado cubre más de un mes.</p>
+        <div class="table-wrap" style="margin-bottom:28px;">
+          <table class="proj-table">
+            <thead><tr><th>Mes</th><th>Ingresos</th><th>Gastos</th><th>Utilidad</th></tr></thead>
+            <tbody id="resumenPorMesBody"></tbody>
+          </table>
         </div>
       </div>
 
@@ -689,13 +706,13 @@
       </div>
 
       <h2 class="section-title">Tabla de proyección</h2>
-      <p class="page-sub" style="margin-top:-6px;">El semáforo (verde / amarillo / rojo) representa la probabilidad de cobro del siguiente mes. Se actualiza manualmente desde la ficha de cada cliente en la pestaña Clientes.</p>
+      <p class="page-sub" style="margin-top:-6px;">El semáforo (verde / amarillo / rojo) representa el riesgo de que el cliente se vaya / no renueve, según tu propio análisis — no si ya pagó. Se actualiza manualmente desde la ficha de cada cliente en la pestaña Clientes.</p>
       <div class="table-wrap">
         <table class="proj-table">
           <thead>
             <tr>
               <th>Cliente</th><th>Servicio</th><th>Monto mensual</th><th>Día de pago</th>
-              <th>Riesgo / Prob. de cobro</th><th>¿Cuenta?</th><th>Motivo</th><th>Próxima acción</th><th>Fecha acción</th>
+              <th>Riesgo de continuidad</th><th>¿Cuenta?</th><th>Motivo</th><th>Próxima acción</th><th>Fecha acción</th>
             </tr>
           </thead>
           <tbody id="proyeccionBody">
@@ -885,6 +902,7 @@
 
       <div style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary btn-sm tab-active" data-filtrocliente="activos">Activos</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="riesgo">En riesgo</button>
         <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="archivados">Archivados / Cancelados</button>
         <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="todos">Todos</button>
       </div>
@@ -1141,6 +1159,10 @@
     <div id="pageSeguimiento" class="hidden">
       <h2 class="page-title">Seguimiento operativo</h2>
       <p class="page-sub">Separado del dashboard financiero: quejas, hitos y acciones de retención por cliente.</p>
+      <div style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary btn-sm tab-active" data-filtroseguimiento="todos">Todos</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-filtroseguimiento="riesgo">En riesgo</button>
+      </div>
       <div id="seguimientoList"><p class="page-sub">Cargando…</p></div>
     </div>
 
@@ -1808,6 +1830,16 @@ function cargarPagosEsteMes(){
     .catch(() => { pagosEsteMesPorCliente = new Set(); });
 }
 
+let estadosCuentaPendientesPorCliente = new Set();
+function cargarEstadosCuentaPendientes(){
+  return db.collection('estadosCuenta').where('estatus','==','pendiente').get()
+    .then(snap => {
+      estadosCuentaPendientesPorCliente = new Set();
+      snap.forEach(d => estadosCuentaPendientesPorCliente.add(d.data().clienteId));
+    })
+    .catch(() => { estadosCuentaPendientesPorCliente = new Set(); });
+}
+
 let filtroClientesActual = 'activos';
 document.querySelectorAll('[data-filtrocliente]').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1818,7 +1850,7 @@ document.querySelectorAll('[data-filtrocliente]').forEach(btn => {
 });
 
 function cargarClientes(){
-  Promise.all([db.collection('clientes').get(), cargarPagosEsteMes()]).then(([snap]) => {
+  Promise.all([db.collection('clientes').get(), cargarPagosEsteMes(), cargarEstadosCuentaPendientes()]).then(([snap]) => {
     clientesCache = {};
     snap.forEach(d => { clientesCache[d.id] = d.data(); }); // caché completa, independiente del filtro visible
     const cont = $('clientesList');
@@ -1826,13 +1858,20 @@ function cargarClientes(){
 
     let docs = snap.docs;
     if (filtroClientesActual === 'activos') docs = docs.filter(d => clienteEsActivo(d.data()));
+    else if (filtroClientesActual === 'riesgo') docs = docs.filter(d => clienteEsActivo(d.data()) && (d.data().riesgo === 'amarillo' || d.data().riesgo === 'rojo'));
     else if (filtroClientesActual === 'archivados') docs = docs.filter(d => !clienteEsActivo(d.data()));
 
     if (!docs.length) {
-      cont.innerHTML = `<p class="page-sub">${filtroClientesActual === 'activos' ? 'No hay clientes activos.' : 'No hay clientes en este filtro.'}</p>`;
+      const mensajes = { activos:'No hay clientes activos.', riesgo:'No hay clientes en riesgo en este momento — buena señal.', archivados:'No hay clientes en este filtro.', todos:'No hay clientes en este filtro.' };
+      cont.innerHTML = `<p class="page-sub">${mensajes[filtroClientesActual] || 'No hay clientes en este filtro.'}</p>`;
       return;
     }
-    docs.sort((a,b) => (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    if (filtroClientesActual === 'riesgo') {
+      const orden = { rojo:0, amarillo:1 };
+      docs.sort((a,b) => (orden[a.data().riesgo] ?? 2) - (orden[b.data().riesgo] ?? 2) || (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    } else {
+      docs.sort((a,b) => (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    }
     docs.forEach(docSnap => {
       cont.appendChild(renderClienteCard(docSnap.id, docSnap.data()));
     });
@@ -1853,9 +1892,12 @@ function renderClienteCard(id, c){
       const dias = (Date.now() - fecha.getTime()) / 86400000;
       if (dias > 15) alertas += '<span class="alert-pill">Riesgo desactualizado</span>';
     }
-    if ((c.riesgo === 'amarillo' || c.riesgo === 'rojo') && clienteEsActivo(c) && !pagosEsteMesPorCliente.has(id)) {
-      alertas += '<span class="alert-pill">Pago pendiente</span>';
-    }
+  }
+  // "Pago pendiente" ya NO depende del riesgo (el riesgo mide probabilidad de
+  // que el cliente continúe, no si ya pagó). Esto solo mira si hay un estado
+  // de cuenta real, enviado y todavía no convertido en recibo.
+  if (clienteEsActivo(c) && estadosCuentaPendientesPorCliente.has(id)) {
+    alertas += '<span class="alert-pill">Pago pendiente</span>';
   }
 
   const riesgoBadge = c.tipoCliente === 'recurrente'
@@ -2008,7 +2050,7 @@ function renderDatosGeneralesFicha(c){
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Servicio:</strong> ${c.servicio || '—'}</p>
     ${c.servicioDescripcion ? `<p class="page-sub" style="margin:0 0 6px;">${c.servicioDescripcion}</p>` : ''}
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Tipo:</strong> ${c.tipoCliente === 'recurrente' ? 'Recurrente' : 'Pago único'}${c.tipoCliente === 'recurrente' ? ` · ${formatearMoneda(c.montoMensual)}/mes · día de pago ${c.diaPago || '—'}` : ''}</p>
-    <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Estatus:</strong> ${etiquetaEstatusCliente(c)} &nbsp;·&nbsp; <strong style="color:var(--white);">Riesgo / prob. de cobro:</strong> ${riesgoBadge}</p>
+    <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Estatus:</strong> ${etiquetaEstatusCliente(c)} &nbsp;·&nbsp; <strong style="color:var(--white);">Riesgo de continuidad:</strong> ${riesgoBadge}</p>
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Fecha de alta:</strong> ${c.fechaAlta || '—'} &nbsp;·&nbsp; <strong style="color:var(--white);">Responsable:</strong> ${c.responsable || '—'}</p>
     ${c.estatus === 'cancelado' ? `<p class="page-sub" style="margin:0 0 6px; color:#ff8b91;"><strong style="color:#ff8b91;">Cancelado el ${c.fechaCancelacion || '—'}:</strong> ${c.razonCancelacion || 'Sin razón especificada'}</p>` : ''}
     ${c.motivoRiesgo ? `<p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Motivo del riesgo:</strong> ${c.motivoRiesgo}</p>` : ''}
@@ -2547,6 +2589,12 @@ $('dashFiltro').addEventListener('change', () => {
 $('btnAplicarFiltro').addEventListener('click', () => { cargarResumenFinanciero(); cargarFlujoClientes(); });
 
 let chartFlujo = null;
+const MESES_CORTOS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+function formatearMesLabel(clave){
+  const [y,m] = clave.split('-').map(Number);
+  return `${MESES_CORTOS[m-1]} ${y}`;
+}
+
 function cargarFlujoClientes(){
   const { inicio, fin } = calcularRangoFecha();
   const inicioStr = inicio.toISOString().slice(0,10);
@@ -2554,6 +2602,10 @@ function cargarFlujoClientes(){
 
   db.collection('clientes').get().then(snap => {
     const todos = snap.docs.map(d => d.data());
+    // Clientes creados antes de que existiera el campo "Fecha de alta" no lo
+    // tienen guardado — para esos usamos la fecha real de creación del registro.
+    todos.forEach(c => { if (!c.fechaAlta && c.creadoEn) c.fechaAlta = fechaComo(c.creadoEn).toISOString().slice(0,10); });
+
     const activos = todos.filter(c => clienteEsActivo(c)).length;
     const ganados = todos.filter(c => c.fechaAlta && c.fechaAlta >= inicioStr && c.fechaAlta < finStr);
     const perdidos = todos.filter(c => c.estatus === 'cancelado' && c.fechaCancelacion && c.fechaCancelacion >= inicioStr && c.fechaCancelacion < finStr);
@@ -2569,12 +2621,13 @@ function cargarFlujoClientes(){
     ganados.forEach(c => { const m = c.fechaAlta.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].ganados++; });
     perdidos.forEach(c => { const m = c.fechaCancelacion.slice(0,7); buckets[m] = buckets[m] || { ganados:0, perdidos:0 }; buckets[m].perdidos++; });
     const meses = Object.keys(buckets).sort();
+    const etiquetas = meses.map(formatearMesLabel);
 
     if (chartFlujo) chartFlujo.destroy();
     chartFlujo = new Chart($('chartFlujoClientes'), {
       type: 'bar',
       data: {
-        labels: meses.length ? meses : ['Sin movimiento en este periodo'],
+        labels: meses.length ? etiquetas : ['Sin movimiento en este periodo'],
         datasets: [
           { label:'Ganados', data: meses.map(m => buckets[m].ganados), backgroundColor:'#2ECC71' },
           { label:'Perdidos', data: meses.map(m => buckets[m].perdidos), backgroundColor:'#E50914' }
@@ -2586,6 +2639,14 @@ function cargarFlujoClientes(){
         scales:{ x:{ ticks:{ color:'#9A9A9A' }, grid:{ display:false } }, y:{ ticks:{ color:'#9A9A9A', stepSize:1 }, grid:{ color:'#2A2A2A' } } }
       }
     });
+
+    const filasTabla = meses.length
+      ? meses.map((m,i) => {
+          const g = buckets[m].ganados, p = buckets[m].perdidos, n = g - p;
+          return `<tr><td>${etiquetas[i]}</td><td>${g}</td><td>${p}</td><td style="color:${n<0?'#ff8b91':n>0?'var(--green)':'inherit'};">${n>0?'+':''}${n}</td></tr>`;
+        }).join('')
+      : '<tr><td colspan="4" style="color:var(--muted);">Sin movimiento en este periodo.</td></tr>';
+    $('flujoClientesMesBody').innerHTML = filasTabla;
   });
 }
 
@@ -2627,9 +2688,44 @@ function cargarResumenFinanciero(){
     renderChartGastosCategoria(porCategoria);
     renderTablaIngresos(pagosSnap);
     renderTablaGastos(gastosSnap);
+    renderResumenPorMes(pagosSnap, gastosSnap);
 
     Object.assign(ultimoResumen, { ingresos, gastosTotal, utilidad, margen, porCategoria });
   });
+}
+
+/* Desglose mes a mes de Ingresos/Gastos/Utilidad — solo tiene sentido
+   mostrarlo cuando el periodo filtrado cubre más de un mes (si es "Este mes"
+   sería el mismo número que ya se ve arriba, redundante). */
+function renderResumenPorMes(pagosSnap, gastosSnap){
+  const buckets = {};
+  pagosSnap.forEach(d => {
+    const m = fechaComo(d.data().fechaPago).toISOString().slice(0,7);
+    buckets[m] = buckets[m] || { ingresos:0, gastos:0 };
+    buckets[m].ingresos += Number(d.data().monto || 0);
+  });
+  gastosSnap.forEach(d => {
+    const m = fechaComo(d.data().fecha).toISOString().slice(0,7);
+    buckets[m] = buckets[m] || { ingresos:0, gastos:0 };
+    buckets[m].gastos += Number(d.data().monto || 0);
+  });
+  const meses = Object.keys(buckets).sort();
+
+  if (meses.length <= 1) {
+    hide($('resumenPorMesWrap'));
+    return;
+  }
+  show($('resumenPorMesWrap'));
+  $('resumenPorMesBody').innerHTML = meses.map(m => {
+    const d = buckets[m];
+    const u = d.ingresos - d.gastos;
+    return `<tr>
+      <td>${formatearMesLabel(m)}</td>
+      <td>${formatearMoneda(d.ingresos)}</td>
+      <td>${formatearMoneda(d.gastos)}</td>
+      <td style="color:${u<0?'#ff8b91':'var(--green)'};">${formatearMoneda(u)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function obtenerEtiquetaPeriodo(){
@@ -2938,6 +3034,8 @@ function renderChartClientesRiesgo(nv, na, nr){
    Separado del dashboard financiero. Vive en sus propias
    colecciones: quejas, hitos, accionesRetencion.
    ====================================================== */
+let filtroSeguimientoActual = 'todos';
+
 function cargarSeguimiento(){
   db.collection('clientes').get().then(snap => {
     const cont = $('seguimientoList');
@@ -2946,12 +3044,32 @@ function cargarSeguimiento(){
       cont.innerHTML = '<p class="page-sub">No hay clientes registrados todavía.</p>';
       return;
     }
-    const docs = snap.docs.sort((a,b) => (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    let docs = snap.docs;
+    if (filtroSeguimientoActual === 'riesgo') {
+      docs = docs.filter(d => clienteEsActivo(d.data()) && (d.data().riesgo === 'amarillo' || d.data().riesgo === 'rojo'));
+    }
+    if (!docs.length) {
+      cont.innerHTML = '<p class="page-sub">No hay clientes en riesgo en este momento — buena señal.</p>';
+      return;
+    }
+    if (filtroSeguimientoActual === 'riesgo') {
+      const orden = { rojo:0, amarillo:1 };
+      docs.sort((a,b) => (orden[a.data().riesgo] ?? 2) - (orden[b.data().riesgo] ?? 2) || (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    } else {
+      docs.sort((a,b) => (a.data().nombre||'').localeCompare(b.data().nombre||''));
+    }
     docs.forEach(docSnap => {
       cont.appendChild(renderSeguimientoCard(docSnap.id, docSnap.data()));
     });
   });
 }
+document.querySelectorAll('[data-filtroseguimiento]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    filtroSeguimientoActual = btn.dataset.filtroseguimiento;
+    document.querySelectorAll('[data-filtroseguimiento]').forEach(b => b.classList.toggle('tab-active', b === btn));
+    cargarSeguimiento();
+  });
+});
 
 function renderSeguimientoCard(id, c){
   const card = document.createElement('div');
@@ -2959,15 +3077,18 @@ function renderSeguimientoCard(id, c){
   const riesgoBadge = c.tipoCliente === 'recurrente'
     ? `<span class="riesgo-dot riesgo-${c.riesgo || 'verde'}"></span>${(c.riesgo||'verde').toUpperCase()}`
     : '—';
+  const enRiesgo = c.riesgo === 'amarillo' || c.riesgo === 'rojo';
   card.innerHTML = `
     <div class="cliente-card-head">
       <div>
         <p class="cliente-nombre">${c.nombre || '(sin nombre)'}</p>
         <p class="cliente-meta">
           ${c.servicio || 'Sin servicio'}
-          &nbsp;·&nbsp;Estado actual / prob. de cobro: ${riesgoBadge}
+          &nbsp;·&nbsp;Riesgo de continuidad: ${riesgoBadge}
           &nbsp;·&nbsp;${etiquetaEstatusCliente(c)}
         </p>
+        ${enRiesgo ? `<p class="page-sub" style="margin:6px 0 0; color:${c.riesgo === 'rojo' ? '#ff8b91' : 'var(--amber)'};"><strong>Motivo:</strong> ${c.motivoRiesgo || 'Sin motivo especificado todavía — agrégalo desde Clientes → Editar.'}</p>` : ''}
+        ${enRiesgo && c.proximaAccion ? `<p class="page-sub" style="margin:2px 0 0;"><strong>Próxima acción:</strong> ${c.proximaAccion}${c.fechaProximaAccion ? ' (' + c.fechaProximaAccion + ')' : ''}</p>` : ''}
       </div>
       <div class="cliente-actions">
         <button class="btn btn-secondary btn-sm" data-action="toggle">Ver seguimiento</button>
