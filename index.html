@@ -70,9 +70,9 @@
   }
   .wordmark span{color:var(--red);}
   .brand-logo{ display:flex; align-items:center; }
-  .brand-logo img{ height:34px; display:block; }
-  .sidebar .brand-logo img{ height:24px; }
-  @media (max-width:760px){ .sidebar .brand-logo img{ height:22px; } }
+  .brand-logo img{ height:46px; display:block; }
+  .sidebar .brand-logo img{ height:40px; }
+  @media (max-width:760px){ .sidebar .brand-logo img{ height:32px; } }
   .auth-rule{
     height:3px;
     width:56px;
@@ -134,6 +134,22 @@
   .btn-danger{background:transparent; border:1px solid var(--red-dim); color:#ff8b91;}
   .btn-danger:hover{background:rgba(229,9,20,0.12); border-color:var(--red);}
   .tab-active{background:var(--red) !important; border-color:var(--red) !important; color:var(--white) !important;}
+  .nav-badge{
+    display:inline-flex; align-items:center; justify-content:center;
+    min-width:18px; height:18px; padding:0 5px; margin-left:6px;
+    background:var(--red); color:var(--white); border-radius:999px;
+    font-size:11px; font-weight:700; line-height:18px;
+  }
+  .alerta-seguimiento{
+    background:rgba(245,166,35,0.10); border:1px solid var(--amber); border-radius:10px;
+    padding:14px 16px; margin-bottom:18px;
+  }
+  .alerta-seguimiento h4{ margin:0 0 8px; font-size:13px; color:var(--amber); font-family:var(--font-display); }
+  .alerta-seguimiento-row{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:6px 0; border-top:1px solid rgba(245,166,35,0.2);
+  }
+  .alerta-seguimiento-row:first-of-type{ border-top:none; }
   .btn-link-num{background:none; border:none; padding:0; font:inherit; font-weight:700; text-decoration:underline; cursor:pointer; width:auto;}
   .auth-error{
     background:rgba(229,9,20,0.12);
@@ -518,7 +534,7 @@
     <div class="auth-rule"></div>
 
     <div class="nav-item active" data-page="dashboard" id="navDashboard">Dashboard</div>
-    <div class="nav-item hidden" data-page="crm" id="navCRM">CRM Bravo</div>
+    <div class="nav-item hidden" data-page="crm" id="navCRM">CRM Bravo <span class="nav-badge hidden" id="navCRMBadge">0</span></div>
     <div class="nav-item hidden" data-page="clientes" id="navClientes">Clientes</div>
     <div class="nav-item hidden" data-page="seguimiento" id="navSeguimiento">Seguimiento</div>
     <div class="nav-item hidden" data-page="gastos" id="navGastos">Gastos</div>
@@ -763,6 +779,7 @@
 
       <!-- Vista: Pipeline (kanban) -->
       <div id="crmPipelineView">
+        <div id="alertaSeguimientoCRM"></div>
         <button type="button" class="btn" id="btnNuevoProspecto" style="width:auto; margin-bottom:16px;">+ Nuevo prospecto</button>
         <div class="kanban-board" id="kanbanBoard"><p class="page-sub">Cargando…</p></div>
       </div>
@@ -1616,6 +1633,7 @@ function iniciarApp(u){
 
   if (u.permisos.crmVer || u.permisos.admin) {
     show($('navCRM'));
+    verificarAlertasCRMInicial();
   } else {
     hide($('navCRM'));
   }
@@ -2401,10 +2419,6 @@ $('pagoForm').addEventListener('submit', (e) => {
     return db.collection('pagos').add(pago).then(() => pago);
   }).then(pago => {
     ultimoPagoGenerado = pago;
-    $('pagoFormOk').textContent = `Pago registrado — Recibo No. ${folioRPTexto(pago.folio)}`;
-    show($('pagoFormOk'));
-    $('pagoForm').classList.add('hidden');
-    show($('pagoListoActions'));
     generarReciboPDF(pago);
     // Si este pago viene de un estado de cuenta pendiente, lo marcamos como pagado
     // y lo enlazamos con el folio del recibo recién generado — sin crear un folio nuevo.
@@ -2415,6 +2429,7 @@ $('pagoForm').addEventListener('submit', (e) => {
         reciboFolio: pago.folio
       }).catch(() => {});
     }
+    hide($('pagoFormPanel'));
     cargarClientes();
     cargarResumenFinanciero();
   }).catch(err => {
@@ -2501,11 +2516,9 @@ $('estadoCuentaForm').addEventListener('submit', (e) => {
     return db.collection('estadosCuenta').add(ec).then(() => ec);
   }).then(ec => {
     ultimoECGenerado = ec;
-    $('estadoCuentaOk').textContent = `Estado de cuenta No. ${folioECTexto(ec.folioEC)} generado — saldo a pagar ${formatearMoneda(ec.monto)}.`;
-    show($('estadoCuentaOk'));
-    $('estadoCuentaForm').classList.add('hidden');
-    show($('ecListoActions'));
     generarEstadoCuentaPDF(ec);
+    hide($('estadoCuentaFormPanel'));
+    cargarClientes();
   }).catch(err => {
     $('estadoCuentaError').textContent = err.message;
     show($('estadoCuentaError'));
@@ -4182,6 +4195,19 @@ function sembrarEtapasPorDefault(){
 }
 
 /* ---------- Kanban ---------- */
+/* Se llama al iniciar sesión, para que el contador del menú ya aparezca
+   aunque el usuario no haya entrado todavía a la pestaña CRM Bravo. */
+function verificarAlertasCRMInicial(){
+  cargarEtapas().then(() => db.collection('prospectos').get()).then(snap => {
+    prospectosCache = {};
+    snap.forEach(d => { prospectosCache[d.id] = Object.assign({ id:d.id }, d.data()); });
+    const vencidos = obtenerProspectosConSeguimientoVencido();
+    const badge = $('navCRMBadge');
+    if (vencidos.length) { badge.textContent = vencidos.length; show(badge); }
+    else { hide(badge); }
+  }).catch(() => {});
+}
+
 function cargarKanban(){
   const board = $('kanbanBoard');
   board.innerHTML = '<p class="page-sub">Cargando…</p>';
@@ -4189,6 +4215,52 @@ function cargarKanban(){
     prospectosCache = {};
     snap.forEach(d => { prospectosCache[d.id] = Object.assign({ id:d.id }, d.data()); });
     renderKanban();
+    renderAlertaSeguimientoCRM();
+  });
+}
+
+/* Prospectos cuya fecha de próximo seguimiento ya llegó o ya pasó (y que no
+   están ganados, perdidos ni convertidos) — se muestran como alerta arriba
+   del pipeline, y como contador en el menú lateral. */
+function obtenerProspectosConSeguimientoVencido(){
+  const hoyStr = new Date().toISOString().slice(0,10);
+  const etapaPorId = {};
+  etapasCache.forEach(e => { etapaPorId[e.id] = e; });
+  return Object.values(prospectosCache).filter(p => {
+    if (p.convertido) return false;
+    if (!p.fechaProximoSeguimiento || p.fechaProximoSeguimiento > hoyStr) return false;
+    const etapa = etapaPorId[p.etapaId];
+    if (etapa && (etapa.esGanado || etapa.esPerdido)) return false;
+    return true;
+  }).sort((a,b) => a.fechaProximoSeguimiento.localeCompare(b.fechaProximoSeguimiento));
+}
+
+function renderAlertaSeguimientoCRM(){
+  const vencidos = obtenerProspectosConSeguimientoVencido();
+  const badge = $('navCRMBadge');
+  if (vencidos.length) { badge.textContent = vencidos.length; show(badge); }
+  else { hide(badge); }
+
+  const cont = $('alertaSeguimientoCRM');
+  if (!vencidos.length) { cont.innerHTML = ''; return; }
+  const hoyStr = new Date().toISOString().slice(0,10);
+  cont.innerHTML = `
+    <div class="alerta-seguimiento">
+      <h4>⚠ ${vencidos.length} prospecto${vencidos.length===1?'':'s'} con seguimiento por hacer</h4>
+      ${vencidos.map((p,i) => `
+        <div class="alerta-seguimiento-row">
+          <span>
+            <strong>${p.nombre}</strong>
+            ${p.fechaProximoSeguimiento === hoyStr ? ' · vence hoy' : ` · vencido desde ${p.fechaProximoSeguimiento}`}
+            ${p.responsable ? ' · ' + p.responsable : ''}
+          </span>
+          <button type="button" class="btn btn-secondary btn-sm" data-abrirprospecto="${i}">Ver</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  cont.querySelectorAll('[data-abrirprospecto]').forEach(btn => {
+    btn.addEventListener('click', () => abrirFormularioProspecto(vencidos[Number(btn.dataset.abrirprospecto)].id));
   });
 }
 
