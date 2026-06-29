@@ -857,7 +857,7 @@
             </div>
             <div class="field-row">
               <div class="field"><label>Probabilidad de cierre (%)</label><input type="number" id="prProbabilidad" min="0" max="100" step="5" value="50"></div>
-              <div class="field"><label>Fecha próximo seguimiento</label><input type="date" id="prFechaSeguimiento"></div>
+              <div class="field"><label>Próximo seguimiento (también lo puedes mover desde la bitácora de abajo)</label><input type="date" id="prFechaSeguimiento"></div>
             </div>
             <div class="field">
               <label>Etapa actual</label>
@@ -869,12 +869,16 @@
 
           <div class="segui-section hidden" id="prospectoSeguimientoSection" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
             <div class="segui-section-head">
-              <h4>Historial de seguimiento comercial</h4>
-              <button type="button" class="btn btn-secondary btn-sm" id="btnNuevoSeguimientoComercial">+ Agregar</button>
+              <h4>Bitácora de seguimiento</h4>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnNuevoSeguimientoComercial">+ Nuevo seguimiento</button>
             </div>
+            <p class="page-sub" style="margin:0 0 10px;">Registra qué pasó (llamada, propuesta, reunión…) y de una vez deja agendado cuándo le sigues — no necesitas subir al formulario de arriba.</p>
             <div class="segui-mini-form hidden" id="formSeguimientoComercial">
-              <div class="field"><label>Descripción</label><textarea id="scDesc" placeholder="Ej. llamada de seguimiento, envío de propuesta…"></textarea></div>
-              <div class="field"><label>Fecha</label><input type="date" id="scFecha"></div>
+              <div class="field"><label>¿Qué pasó en este contacto?</label><textarea id="scDesc" placeholder="Ej. llamada de seguimiento, envío de propuesta, reunión presencial…"></textarea></div>
+              <div class="field-row">
+                <div class="field"><label>Fecha de este contacto</label><input type="date" id="scFecha"></div>
+                <div class="field"><label>Próximo seguimiento</label><input type="date" id="scProximoSeguimiento"></div>
+              </div>
               <button type="button" class="btn btn-sm" id="btnGuardarSeguimientoComercial">Guardar</button>
             </div>
             <div id="listSeguimientoComercial"><p class="page-sub" style="margin:0;">Sin seguimiento registrado.</p></div>
@@ -4462,7 +4466,7 @@ $('btnEliminarProspecto').addEventListener('click', () => {
   }).catch(err => alert('Error: ' + err.message));
 });
 
-/* ---------- Seguimiento comercial (historial dentro del prospecto) ---------- */
+/* ---------- Seguimiento comercial (bitácora + próxima fecha, todo en un mismo paso) ---------- */
 function cargarSeguimientoComercial(prospectoId){
   const cont = $('listSeguimientoComercial');
   cont.innerHTML = '<p class="page-sub" style="margin:0;">Cargando…</p>';
@@ -4470,27 +4474,38 @@ function cargarSeguimientoComercial(prospectoId){
     if (snap.empty) { cont.innerHTML = '<p class="page-sub" style="margin:0;">Sin seguimiento registrado.</p>'; return; }
     const docs = snap.docs.map(d => d.data()).sort((a,b) => (b.fecha||'').localeCompare(a.fecha||''));
     cont.innerHTML = docs.map(s => `
-      <div class="pago-row"><span><strong>${s.fecha||''}</strong>${s.responsable ? ' · ' + s.responsable : ''} — ${s.descripcion||''}</span></div>
+      <div class="pago-row"><span><strong>${s.fecha||''}</strong>${s.responsable ? ' · ' + s.responsable : ''} — ${s.descripcion||''}${s.proximoSeguimiento ? `<br><span class="page-sub" style="margin:0;">Siguiente seguimiento agendado: ${s.proximoSeguimiento}</span>` : ''}</span></div>
     `).join('');
   });
 }
 $('btnNuevoSeguimientoComercial').addEventListener('click', () => {
   $('formSeguimientoComercial').classList.toggle('hidden');
   $('scFecha').value = new Date().toISOString().slice(0,10);
+  // Se pre-llena con lo que ya estaba agendado, para que sea fácil solo confirmarlo o moverlo.
+  $('scProximoSeguimiento').value = $('prFechaSeguimiento').value || '';
 });
 $('btnGuardarSeguimientoComercial').addEventListener('click', () => {
   const prospectoId = $('prospectoId').value;
   if (!prospectoId) { alert('Primero guarda el prospecto.'); return; }
   const desc = $('scDesc').value.trim();
-  if (!desc) { alert('Escribe una descripción.'); return; }
+  if (!desc) { alert('Escribe qué pasó en este contacto.'); return; }
   const fecha = $('scFecha').value || new Date().toISOString().slice(0,10);
+  const proximoSeguimiento = $('scProximoSeguimiento').value || null;
+
   db.collection('seguimientoComercial').add({
-    prospectoId, fecha, descripcion: desc, responsable: currentUserDoc.email,
+    prospectoId, fecha, descripcion: desc, proximoSeguimiento, responsable: currentUserDoc.email,
     creadoEn: firebase.firestore.FieldValue.serverTimestamp()
+  }).then(() => {
+    // La fecha de próximo seguimiento del prospecto se actualiza de una vez,
+    // sin tener que subir al formulario de arriba a guardarla por separado.
+    return db.collection('prospectos').doc(prospectoId).update({ fechaProximoSeguimiento: proximoSeguimiento });
   }).then(() => {
     $('scDesc').value = '';
     $('formSeguimientoComercial').classList.add('hidden');
+    $('prFechaSeguimiento').value = proximoSeguimiento || '';
+    if (prospectosCache[prospectoId]) prospectosCache[prospectoId].fechaProximoSeguimiento = proximoSeguimiento;
     cargarSeguimientoComercial(prospectoId);
+    renderAlertaSeguimientoCRM();
   }).catch(err => alert('Error: ' + err.message));
 });
 
