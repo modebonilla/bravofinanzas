@@ -1087,6 +1087,7 @@
           <input type="hidden" id="pagoClienteId">
           <input type="hidden" id="pagoEstadoCuentaId" value="">
           <input type="hidden" id="pagoFolioVinculado" value="">
+          <input type="hidden" id="pagoMontoEC" value="0">
           <div class="field">
             <label>Concepto detallado (qué se le está cobrando)</label>
             <textarea id="pConcepto" placeholder="Ej. Gestión de pauta Meta + 4 piezas de contenido — junio 2026"></textarea>
@@ -1105,6 +1106,22 @@
               <input type="date" id="pFecha" required>
             </div>
           </div>
+
+          <!-- Pago parcial — solo aparece cuando viene de un estado de cuenta -->
+          <div class="field hidden" id="pagoParcialWrap" style="background:rgba(245,166,35,0.08); border:1px solid rgba(245,166,35,0.3); border-radius:8px; padding:12px;">
+            <label style="display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;">
+              <input type="checkbox" id="pEsParcial" style="width:auto;">
+              <span>¿Es un pago parcial? (el cliente paga una parte ahora y el resto después)</span>
+            </label>
+            <div class="hidden" id="pagoParcialDetalle">
+              <div class="field" style="margin-bottom:8px;">
+                <label>¿Cuánto paga ahora?</label>
+                <input type="number" id="pMontoParcial" step="0.01" min="0" placeholder="0.00">
+              </div>
+              <p class="page-sub" id="pSaldoRestante" style="margin:0; color:var(--amber); font-weight:700;">Saldo que quedará pendiente: —</p>
+            </div>
+          </div>
+
           <div class="field">
             <label>Método de pago</label>
             <select id="pMetodo">
@@ -1933,11 +1950,14 @@ function cargarPagosEsteMes(){
 
 let estadosCuentaPendientesPorCliente = new Set();
 function cargarEstadosCuentaPendientes(){
-  return db.collection('estadosCuenta').where('estatus','==','pendiente').get()
-    .then(snap => {
-      estadosCuentaPendientesPorCliente = new Set();
-      snap.forEach(d => estadosCuentaPendientesPorCliente.add(d.data().clienteId));
-    })
+  return Promise.all([
+    db.collection('estadosCuenta').where('estatus','==','pendiente').get(),
+    db.collection('estadosCuenta').where('estatus','==','parcial').get()
+  ]).then(([pendSnap, parcSnap]) => {
+    estadosCuentaPendientesPorCliente = new Set();
+    pendSnap.forEach(d => estadosCuentaPendientesPorCliente.add(d.data().clienteId));
+    parcSnap.forEach(d => estadosCuentaPendientesPorCliente.add(d.data().clienteId));
+  })
     .catch(() => { estadosCuentaPendientesPorCliente = new Set(); });
 }
 
@@ -2105,7 +2125,8 @@ function renderHistorialPagosUnificado(id, container){
     ecs.forEach(ec => {
       const pagoVinculado = pagoPorEcId[ec.id] || null;
       let estatus = 'Pagado';
-      if (ec.estatus !== 'pagado') estatus = (ec.fechaVencimiento && ec.fechaVencimiento < hoyStr) ? 'Vencido' : 'Pendiente';
+      if (ec.estatus === 'parcial') estatus = 'Pago parcial';
+      else if (ec.estatus !== 'pagado') estatus = (ec.fechaVencimiento && ec.fechaVencimiento < hoyStr) ? 'Vencido' : 'Pendiente';
       filas.push({
         tipo:'ec', ec, pago: pagoVinculado,
         periodo: ec.periodo || '—',
@@ -2137,7 +2158,7 @@ function renderHistorialPagosUnificado(id, container){
     }
     filas.sort((a,b) => b.fechaOrden - a.fechaOrden);
 
-    const colorEstatus = { Pendiente:'var(--amber)', Vencido:'#ff8b91', Pagado:'var(--green)' };
+    const colorEstatus = { Pendiente:'var(--amber)', Vencido:'#ff8b91', Pagado:'var(--green)', 'Pago parcial':'#5B9BFF' };
     const puedeEditar = !!(currentUserDoc.permisos.clientesEditar || currentUserDoc.permisos.admin);
 
     const renderFila = (f, i) => `
@@ -2151,7 +2172,7 @@ function renderHistorialPagosUnificado(id, container){
         <td>${f.metodoPago}</td>
         <td style="white-space:nowrap; display:flex; gap:4px; flex-wrap:wrap;">
           ${f.tipo === 'ec' ? `<button type="button" class="btn btn-secondary btn-sm" data-verec="${i}">PDF EC</button>` : ''}
-          ${f.tipo === 'ec' && f.estatus !== 'Pagado' ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">Registrar pago</button>` : ''}
+          ${(f.tipo === 'ec' && (f.estatus === 'Pendiente' || f.estatus === 'Vencido' || f.estatus === 'Pago parcial')) ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">${f.estatus === 'Pago parcial' ? 'Registrar saldo' : 'Registrar pago'}</button>` : ''}
           ${f.pago ? `<button type="button" class="btn btn-secondary btn-sm" data-verrecibo="${i}">PDF Recibo</button>` : ''}
           ${puedeEditar ? `<button type="button" class="btn btn-secondary btn-sm" data-editar="${i}">Editar</button>` : ''}
           ${puedeEditar ? `<button type="button" class="btn btn-danger btn-sm" data-eliminar="${i}">Eliminar</button>` : ''}
@@ -2450,11 +2471,27 @@ function actualizarTotalPago(){
   const descuento = Number($('pDescuento').value) || 0;
   const total = Math.max(original - descuento, 0);
   $('pTotalPreview').textContent = descuento > 0
-    ? `Total a cobrar: ${formatearMoneda(total)} (costo ${formatearMoneda(original)} − descuento ${formatearMoneda(descuento)})`
+    ? `Total a cobrar: ${formatearMoneda(total)} (costo ${formatearMoneda(original)} - descuento ${formatearMoneda(descuento)})`
     : `Total a cobrar: ${formatearMoneda(total)}`;
+  actualizarSaldoParcial();
+}
+function actualizarSaldoParcial(){
+  if (!$('pEsParcial').checked) return;
+  const total = Math.max((Number($('pMontoOriginal').value)||0) - (Number($('pDescuento').value)||0), 0);
+  const parcial = Number($('pMontoParcial').value) || 0;
+  const saldo = Math.max(total - parcial, 0);
+  $('pSaldoRestante').textContent = parcial > 0
+    ? `Saldo que quedará pendiente: ${formatearMoneda(saldo)}`
+    : 'Saldo que quedará pendiente: —';
 }
 $('pMontoOriginal').addEventListener('input', actualizarTotalPago);
 $('pDescuento').addEventListener('input', actualizarTotalPago);
+$('pMontoParcial').addEventListener('input', actualizarSaldoParcial);
+$('pEsParcial').addEventListener('change', () => {
+  $('pagoParcialDetalle').classList.toggle('hidden', !$('pEsParcial').checked);
+  if ($('pEsParcial').checked) $('pMontoParcial').focus();
+  actualizarSaldoParcial();
+});
 
 function abrirFormularioPago(id, ec){
   const c = clientesCache[id];
@@ -2466,20 +2503,26 @@ function abrirFormularioPago(id, ec){
   $('pagoClienteId').value = id;
   $('pagoEstadoCuentaId').value = ec ? ec.id : '';
   $('pagoFolioVinculado').value = ec ? ec.folioEC : '';
+  $('pagoMontoEC').value = ec ? (ec.monto || 0) : 0;
   $('pagoClienteNombre').textContent = c.nombre + (ec ? ' (desde estado de cuenta)' : '');
+
+  // El bloque de pago parcial solo tiene sentido si hay un EC con un monto total conocido
   if (ec) {
-    // El estado de cuenta ya tiene su propio descuento/anticipo aplicados;
-    // lo que se cobra ahora es el saldo restante (ec.monto).
+    show($('pagoParcialWrap'));
     $('pConcepto').value = (ec.concepto || '') + ` (pago de Estado de cuenta No. ${folioECTexto(ec.folioEC)})`;
     $('pMontoOriginal').value = ec.monto || '';
     $('pDescuento').value = 0;
     $('pPeriodo').value = ec.periodo || '';
   } else {
+    hide($('pagoParcialWrap'));
     $('pConcepto').value = c.servicioDescripcion || c.servicio || '';
     $('pMontoOriginal').value = c.tipoCliente === 'recurrente' ? (c.montoMensual || '') : '';
     $('pDescuento').value = 0;
     $('pPeriodo').value = '';
   }
+  $('pEsParcial').checked = false;
+  hide($('pagoParcialDetalle'));
+  $('pMontoParcial').value = '';
   $('pReferencia').value = '';
   $('pFecha').value = new Date().toISOString().slice(0,10);
   actualizarTotalPago();
@@ -2501,12 +2544,25 @@ $('pagoForm').addEventListener('submit', (e) => {
   const conceptoDetallado = $('pConcepto').value.trim();
   const montoOriginal = Number($('pMontoOriginal').value) || 0;
   const descuento = Number($('pDescuento').value) || 0;
-  const monto = Math.max(montoOriginal - descuento, 0);
+  const totalEC = Math.max(montoOriginal - descuento, 0);
   const [y,m,d] = $('pFecha').value.split('-').map(Number);
   const fechaPago = new Date(y, m-1, d, 12, 0, 0);
   const metodoPago = $('pMetodo').value;
   const periodo = $('pPeriodo').value.trim();
   const referencia = $('pReferencia').value.trim();
+  const esParcial = $('pEsParcial').checked && !!ecId;
+  const montoParcial = esParcial ? (Number($('pMontoParcial').value) || 0) : totalEC;
+
+  if (esParcial && montoParcial <= 0) {
+    $('pagoFormError').textContent = 'Escribe cuánto paga ahora en el campo "¿Cuánto paga ahora?".';
+    show($('pagoFormError'));
+    return;
+  }
+  if (esParcial && montoParcial >= totalEC) {
+    $('pagoFormError').textContent = `Si paga el total (${formatearMoneda(totalEC)}) no es pago parcial — desmarca la casilla.`;
+    show($('pagoFormError'));
+    return;
+  }
 
   // Si este pago viene de un estado de cuenta, el recibo se queda con EL
   // MISMO número de folio (vinculados, fáciles de rastrear). Si es un pago
@@ -2514,9 +2570,12 @@ $('pagoForm').addEventListener('submit', (e) => {
   const promesaFolio = folioVinculado ? Promise.resolve(Number(folioVinculado)) : obtenerSiguienteFolio();
 
   promesaFolio.then(folio => {
+    const monto = esParcial ? montoParcial : totalEC;
     const pago = {
       clienteId, clienteNombre: c.nombre, servicio: c.servicio,
-      conceptoDetallado, montoOriginal, descuento, monto,
+      conceptoDetallado: conceptoDetallado + (esParcial ? ` — Pago parcial (${formatearMoneda(monto)} de ${formatearMoneda(totalEC)})` : ''),
+      montoOriginal, descuento, monto,
+      esParcial, saldoRestante: esParcial ? Math.max(totalEC - montoParcial, 0) : 0,
       fechaPago, metodoPago, folio, periodo, referencia,
       estadoCuentaId: ecId || null,
       generadoPor: currentUserDoc.email,
@@ -2526,14 +2585,25 @@ $('pagoForm').addEventListener('submit', (e) => {
   }).then(pago => {
     ultimoPagoGenerado = pago;
     generarReciboPDF(pago);
-    // Si este pago viene de un estado de cuenta pendiente, lo marcamos como pagado
-    // y lo enlazamos con el folio del recibo recién generado — sin crear un folio nuevo.
+
     if (ecId) {
-      db.collection('estadosCuenta').doc(ecId).update({
-        estatus: 'pagado',
-        fechaPago: fechaPago,
-        reciboFolio: pago.folio
-      }).catch(() => {});
+      const saldoRestante = esParcial ? Math.max(totalEC - montoParcial, 0) : 0;
+      if (esParcial) {
+        // Pago parcial: el EC queda "parcial" con el saldo pendiente actualizado.
+        // No se marca como pagado — el cliente aún debe el resto.
+        db.collection('estadosCuenta').doc(ecId).update({
+          estatus: 'parcial',
+          monto: saldoRestante,
+          montoOriginalEC: totalEC
+        }).catch(() => {});
+      } else {
+        // Pago total: el EC queda cerrado.
+        db.collection('estadosCuenta').doc(ecId).update({
+          estatus: 'pagado',
+          fechaPago: fechaPago,
+          reciboFolio: pago.folio
+        }).catch(() => {});
+      }
     }
     hide($('pagoFormPanel'));
     cargarClientes();
