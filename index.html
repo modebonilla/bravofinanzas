@@ -952,6 +952,8 @@
       <div style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
         <button type="button" class="btn btn-secondary btn-sm tab-active" data-filtrocliente="activos">Activos</button>
         <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="riesgo">En riesgo</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="corte1">Corte día 1</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="corte15">Corte día 15</button>
         <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="archivados">Archivados / Cancelados</button>
         <button type="button" class="btn btn-secondary btn-sm" data-filtrocliente="todos">Todos</button>
       </div>
@@ -1019,8 +1021,13 @@
 
           <div class="field-row" id="cDiaPagoWrap">
             <div class="field">
-              <label>Día de pago (1–31)</label>
-              <input type="number" id="cDiaPago" min="1" max="31">
+              <label>Fecha de corte</label>
+              <select id="cDiaPago">
+                <option value="">— Seleccionar —</option>
+                <option value="1">1 de cada mes</option>
+                <option value="15">15 de cada mes</option>
+              </select>
+              <p class="page-sub" style="margin:4px 0 0; font-size:11px;">Si el cliente paga en una fecha distinta, anótalo en las notas de retención.</p>
             </div>
             <div class="field">
               <label>Estatus</label>
@@ -1142,6 +1149,11 @@
             </div>
           </div>
           <p class="page-sub" id="pTotalPreview" style="margin:-4px 0 16px; font-size:13px;">Total a cobrar: —</p>
+          <div class="field">
+            <label>Enlace al comprobante (opcional)</label>
+            <input type="url" id="pAdjunto" placeholder="Pega aquí el enlace de Google Drive, Dropbox, etc.">
+            <p class="page-sub" style="margin:4px 0 0; font-size:11px;">Sube el archivo donde quieras (Google Drive es gratis), copia el enlace compartible y pégalo aquí — quedará guardado y clickeable en el historial.</p>
+          </div>
           <button type="submit" class="btn">Registrar y generar recibo</button>
           <button type="button" class="btn btn-secondary" id="btnCancelarPago" style="margin-top:8px;">Cancelar</button>
         </form>
@@ -1392,6 +1404,11 @@
                 <option value="Otro">Otro</option>
               </select>
             </div>
+          </div>
+          <div class="field">
+            <label>Enlace al comprobante (opcional)</label>
+            <input type="url" id="rgAdjunto" placeholder="Pega aquí el enlace de Google Drive, Dropbox, etc.">
+            <p class="page-sub" style="margin:4px 0 0; font-size:11px;">Enlace compartible como respaldo del gasto.</p>
           </div>
           <button type="submit" class="btn">Registrar gasto</button>
           <button type="button" class="btn btn-secondary" id="btnCancelarRegistroGasto" style="margin-top:8px;">Cancelar</button>
@@ -1980,10 +1997,19 @@ function cargarClientes(){
     let docs = snap.docs;
     if (filtroClientesActual === 'activos') docs = docs.filter(d => clienteEsActivo(d.data()));
     else if (filtroClientesActual === 'riesgo') docs = docs.filter(d => clienteEsActivo(d.data()) && (d.data().riesgo === 'amarillo' || d.data().riesgo === 'rojo'));
+    else if (filtroClientesActual === 'corte1') docs = docs.filter(d => clienteEsActivo(d.data()) && Number(d.data().diaPago) === 1);
+    else if (filtroClientesActual === 'corte15') docs = docs.filter(d => clienteEsActivo(d.data()) && Number(d.data().diaPago) === 15);
     else if (filtroClientesActual === 'archivados') docs = docs.filter(d => !clienteEsActivo(d.data()));
 
     if (!docs.length) {
-      const mensajes = { activos:'No hay clientes activos.', riesgo:'No hay clientes en riesgo en este momento — buena señal.', archivados:'No hay clientes en este filtro.', todos:'No hay clientes en este filtro.' };
+      const mensajes = {
+        activos:'No hay clientes activos.',
+        riesgo:'No hay clientes en riesgo en este momento — buena señal.',
+        corte1:'No hay clientes recurrentes con corte el día 1.',
+        corte15:'No hay clientes recurrentes con corte el día 15.',
+        archivados:'No hay clientes en este filtro.',
+        todos:'No hay clientes en este filtro.'
+      };
       cont.innerHTML = `<p class="page-sub">${mensajes[filtroClientesActual] || 'No hay clientes en este filtro.'}</p>`;
       return;
     }
@@ -2174,6 +2200,7 @@ function renderHistorialPagosUnificado(id, container){
           ${f.tipo === 'ec' ? `<button type="button" class="btn btn-secondary btn-sm" data-verec="${i}">PDF EC</button>` : ''}
           ${(f.tipo === 'ec' && (f.estatus === 'Pendiente' || f.estatus === 'Vencido' || f.estatus === 'Pago parcial')) ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">${f.estatus === 'Pago parcial' ? 'Registrar saldo' : 'Registrar pago'}</button>` : ''}
           ${f.pago ? `<button type="button" class="btn btn-secondary btn-sm" data-verrecibo="${i}">PDF Recibo</button>` : ''}
+          ${f.pago && f.pago.adjunto ? `<a href="${f.pago.adjunto.url}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="text-decoration:none;">📄 Comprobante</a>` : ''}
           ${puedeEditar ? `<button type="button" class="btn btn-secondary btn-sm" data-editar="${i}">Editar</button>` : ''}
           ${puedeEditar ? `<button type="button" class="btn btn-danger btn-sm" data-eliminar="${i}">Eliminar</button>` : ''}
         </td>
@@ -2304,7 +2331,7 @@ function renderDatosGeneralesFicha(c){
     ${contactoLinea ? `<p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Contacto:</strong> ${contactoLinea}</p>` : ''}
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Servicio:</strong> ${c.servicio || '—'}</p>
     ${c.servicioDescripcion ? `<p class="page-sub" style="margin:0 0 6px;">${c.servicioDescripcion}</p>` : ''}
-    <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Tipo:</strong> ${c.tipoCliente === 'recurrente' ? 'Recurrente' : 'Pago único'}${c.tipoCliente === 'recurrente' ? ` · ${formatearMoneda(c.montoMensual)}/mes · día de pago ${c.diaPago || '—'}` : ''}</p>
+    <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Tipo:</strong> ${c.tipoCliente === 'recurrente' ? 'Recurrente' : 'Pago único'}${c.tipoCliente === 'recurrente' ? ` · ${formatearMoneda(c.montoMensual)}/mes · Corte día ${c.diaPago || '—'}` : ''}</p>
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Estatus:</strong> ${etiquetaEstatusCliente(c)} &nbsp;·&nbsp; <strong style="color:var(--white);">Riesgo de continuidad:</strong> ${riesgoBadge}</p>
     <p class="page-sub" style="margin:0 0 6px;"><strong style="color:var(--white);">Fecha de alta:</strong> ${c.fechaAlta || '—'} &nbsp;·&nbsp; <strong style="color:var(--white);">Responsable:</strong> ${c.responsable || '—'}</p>
     ${c.estatus === 'cancelado' ? `<p class="page-sub" style="margin:0 0 6px; color:#ff8b91;"><strong style="color:#ff8b91;">Cancelado el ${c.fechaCancelacion || '—'}:</strong> ${c.razonCancelacion || 'Sin razón especificada'}</p>` : ''}
@@ -2379,7 +2406,7 @@ function abrirFormularioCliente(id){
   $('cServicio').value = c.servicio || '';
   $('cServicioDescripcion').value = c.servicioDescripcion || '';
   $('cMonto').value = c.montoMensual || '';
-  $('cDiaPago').value = c.diaPago || '';
+  $('cDiaPago').value = c.diaPago ? String(c.diaPago) : '';
   $('cEstatus').value = (c.estatus === 'inactivo' ? 'archivado' : c.estatus) || 'activo';
   $('cRazonCancelacion').value = c.razonCancelacion || '';
   actualizarVisibilidadRazonCancelacion();
@@ -2454,6 +2481,26 @@ $('clienteForm').addEventListener('submit', (e) => {
 });
 
 /* ---------- Formulario de pago + folio ---------- */
+/* ============================================================
+   COMPROBANTES — se guardan como enlace (URL), no como archivo.
+   El usuario sube el archivo donde quiera (Google Drive, etc.)
+   y pega el enlace compartible aquí.
+   ============================================================ */
+function leerEnlaceComprobante(inputId){
+  const url = (document.getElementById(inputId).value || '').trim();
+  if (!url) return null;
+  const nombre = url.includes('drive.google.com') ? 'Ver en Google Drive'
+    : url.includes('dropbox.com') ? 'Ver en Dropbox'
+    : url.includes('wa.me') || url.includes('whatsapp') ? 'Ver en WhatsApp'
+    : 'Ver comprobante';
+  return { url, nombre };
+}
+
+function renderAdjunto(adj){
+  if (!adj || !adj.url) return '';
+  return `<a href="${adj.url}" target="_blank" rel="noopener" style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); text-decoration:none;">📄 ${adj.nombre || 'Ver comprobante'}</a>`;
+}
+
 function obtenerSiguienteFolio(){
   const ref = db.collection('meta').doc('contadorRecibos');
   return db.runTransaction(tx => {
@@ -2567,16 +2614,20 @@ $('pagoForm').addEventListener('submit', (e) => {
   // Si este pago viene de un estado de cuenta, el recibo se queda con EL
   // MISMO número de folio (vinculados, fáciles de rastrear). Si es un pago
   // directo, se le asigna el siguiente folio de la fila general.
+  const archivoAdjunto = leerEnlaceComprobante('pAdjunto');
+
   const promesaFolio = folioVinculado ? Promise.resolve(Number(folioVinculado)) : obtenerSiguienteFolio();
 
   promesaFolio.then(folio => {
     const monto = esParcial ? montoParcial : totalEC;
+    const adjunto = archivoAdjunto;
     const pago = {
       clienteId, clienteNombre: c.nombre, servicio: c.servicio,
       conceptoDetallado: conceptoDetallado + (esParcial ? ` — Pago parcial (${formatearMoneda(monto)} de ${formatearMoneda(totalEC)})` : ''),
       montoOriginal, descuento, monto,
       esParcial, saldoRestante: esParcial ? Math.max(totalEC - montoParcial, 0) : 0,
       fechaPago, metodoPago, folio, periodo, referencia,
+      adjunto: adjunto || null,
       estadoCuentaId: ecId || null,
       generadoPor: currentUserDoc.email,
       creadoEn: firebase.firestore.FieldValue.serverTimestamp()
@@ -2584,6 +2635,7 @@ $('pagoForm').addEventListener('submit', (e) => {
     return db.collection('pagos').add(pago).then(() => pago);
   }).then(pago => {
     ultimoPagoGenerado = pago;
+    $('pAdjunto').value = '';
     generarReciboPDF(pago);
 
     if (ecId) {
@@ -4062,9 +4114,12 @@ function toggleHistorialGasto(id, card){
       return fb - fa;
     });
     body.innerHTML = regs.map(r => `
-      <div class="pago-row">
-        <span>${formatearFecha(r.fecha)} ${r.metodoPago ? '· ' + r.metodoPago : ''}</span>
-        <span class="pago-monto">${formatearMoneda(r.monto)}</span>
+      <div class="pago-row" style="flex-direction:column; align-items:flex-start; gap:4px;">
+        <div style="display:flex; justify-content:space-between; width:100%; gap:8px;">
+          <span>${formatearFecha(r.fecha)} ${r.metodoPago ? '· ' + r.metodoPago : ''}</span>
+          <span class="pago-monto">${formatearMoneda(r.monto)}</span>
+        </div>
+        ${r.adjunto ? renderAdjunto(r.adjunto) : ''}
       </div>
     `).join('');
   });
@@ -4180,16 +4235,19 @@ $('registroGastoForm').addEventListener('submit', (e) => {
   const [y,m,d] = $('rgFecha').value.split('-').map(Number);
   const fecha = new Date(y, m-1, d, 12, 0, 0);
   const metodoPago = $('rgMetodo').value;
+  const adjunto = leerEnlaceComprobante('rgAdjunto');
 
   const registro = {
     gastoId, concepto: g.concepto, categoria: g.categoria,
     monto, fecha, metodoPago,
+    adjunto: adjunto || null,
     generadoPor: currentUserDoc.email,
     creadoEn: firebase.firestore.FieldValue.serverTimestamp()
   };
 
   db.collection('registrosGasto').add(registro).then(() => {
     avanzarProximoVencimiento(gastoId, g);
+    $('rgAdjunto').value = '';
     $('registroGastoOk').textContent = 'Gasto registrado correctamente.';
     show($('registroGastoOk'));
     $('registroGastoForm').classList.add('hidden');
