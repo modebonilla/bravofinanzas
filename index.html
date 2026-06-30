@@ -2138,36 +2138,138 @@ function renderHistorialPagosUnificado(id, container){
     filas.sort((a,b) => b.fechaOrden - a.fechaOrden);
 
     const colorEstatus = { Pendiente:'var(--amber)', Vencido:'#ff8b91', Pagado:'var(--green)' };
+    const puedeEditar = !!(currentUserDoc.permisos.clientesEditar || currentUserDoc.permisos.admin);
+
+    const renderFila = (f, i) => `
+      <tr data-fila="${i}">
+        <td>${f.periodo}</td>
+        <td style="white-space:nowrap;">${f.folioTexto}</td>
+        <td style="color:${colorEstatus[f.estatus]}; font-weight:700;">${f.estatus}</td>
+        <td>${formatearMoneda(f.monto)}</td>
+        <td>${f.fechaLimite}</td>
+        <td>${f.fechaPago ? formatearFecha(f.fechaPago) : '—'}</td>
+        <td>${f.metodoPago}</td>
+        <td style="white-space:nowrap; display:flex; gap:4px; flex-wrap:wrap;">
+          ${f.tipo === 'ec' ? `<button type="button" class="btn btn-secondary btn-sm" data-verec="${i}">PDF EC</button>` : ''}
+          ${f.tipo === 'ec' && f.estatus !== 'Pagado' ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">Registrar pago</button>` : ''}
+          ${f.pago ? `<button type="button" class="btn btn-secondary btn-sm" data-verrecibo="${i}">PDF Recibo</button>` : ''}
+          ${puedeEditar ? `<button type="button" class="btn btn-secondary btn-sm" data-editar="${i}">Editar</button>` : ''}
+          ${puedeEditar ? `<button type="button" class="btn btn-danger btn-sm" data-eliminar="${i}">Eliminar</button>` : ''}
+        </td>
+      </tr>`;
+
+    const tbody = document.createElement('tbody');
+    filas.forEach((f,i) => { tbody.innerHTML += renderFila(f,i); });
 
     container.innerHTML = `
       <div class="table-wrap">
         <table class="proj-table">
           <thead><tr><th>Periodo</th><th>Folio</th><th>Estatus</th><th>Monto</th><th>Fecha límite</th><th>Fecha de pago</th><th>Método</th><th></th></tr></thead>
-          <tbody>
-            ${filas.map((f,i) => `
-              <tr>
-                <td>${f.periodo}</td>
-                <td style="white-space:nowrap;">${f.folioTexto}</td>
-                <td style="color:${colorEstatus[f.estatus]}; font-weight:700;">${f.estatus}</td>
-                <td>${formatearMoneda(f.monto)}</td>
-                <td>${f.fechaLimite}</td>
-                <td>${f.fechaPago ? formatearFecha(f.fechaPago) : '—'}</td>
-                <td>${f.metodoPago}</td>
-                <td style="white-space:nowrap;">
-                  ${f.tipo === 'ec' ? `<button type="button" class="btn btn-secondary btn-sm" data-verec="${i}">EC</button>` : ''}
-                  ${f.tipo === 'ec' && f.estatus !== 'Pagado' ? `<button type="button" class="btn btn-sm" data-pagarec="${i}">Registrar pago</button>` : ''}
-                  ${f.pago ? `<button type="button" class="btn btn-secondary btn-sm" data-verrecibo="${i}">Recibo</button>` : ''}
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
         </table>
-      </div>
-    `;
+      </div>`;
+    container.querySelector('table').appendChild(tbody);
 
-    container.querySelectorAll('[data-verec]').forEach(btn => btn.addEventListener('click', () => generarEstadoCuentaPDF(filas[Number(btn.dataset.verec)].ec)));
-    container.querySelectorAll('[data-pagarec]').forEach(btn => btn.addEventListener('click', () => abrirFormularioPago(id, filas[Number(btn.dataset.pagarec)].ec)));
-    container.querySelectorAll('[data-verrecibo]').forEach(btn => btn.addEventListener('click', () => generarReciboPDF(filas[Number(btn.dataset.verrecibo)].pago)));
+    // ---- Acciones: ver PDF ----
+    tbody.querySelectorAll('[data-verec]').forEach(btn => btn.addEventListener('click', () => generarEstadoCuentaPDF(filas[Number(btn.dataset.verec)].ec)));
+    tbody.querySelectorAll('[data-pagarec]').forEach(btn => btn.addEventListener('click', () => abrirFormularioPago(id, filas[Number(btn.dataset.pagarec)].ec)));
+    tbody.querySelectorAll('[data-verrecibo]').forEach(btn => btn.addEventListener('click', () => generarReciboPDF(filas[Number(btn.dataset.verrecibo)].pago)));
+
+    // ---- Acción: eliminar ----
+    tbody.querySelectorAll('[data-eliminar]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const f = filas[Number(btn.dataset.eliminar)];
+        const tipoLabel = f.tipo === 'ec' ? 'estado de cuenta' : 'pago/recibo';
+        if (!confirm(`¿Eliminar este ${tipoLabel}? Si tiene un documento vinculado (EC + recibo del mismo folio), solo se elimina este registro — el otro se queda.\n\nEsta acción no se puede deshacer.`)) return;
+        const promesas = [];
+        if (f.tipo === 'ec') promesas.push(db.collection('estadosCuenta').doc(f.ec.id).delete());
+        if (f.pago && f.tipo !== 'ec') promesas.push(db.collection('pagos').doc(f.pago.id).delete());
+        Promise.all(promesas)
+          .then(() => renderHistorialPagosUnificado(id, container))
+          .catch(err => alert('Error: ' + err.message));
+      });
+    });
+
+    // ---- Acción: editar (fila se convierte en formulario inline) ----
+    tbody.querySelectorAll('[data-editar]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const i = Number(btn.dataset.editar);
+        const f = filas[i];
+        const tr = tbody.querySelector(`tr[data-fila="${i}"]`);
+        const metodos = ['Transferencia','Efectivo','Tarjeta','Otro'];
+
+        if (f.tipo === 'ec') {
+          tr.innerHTML = `
+            <td colspan="8">
+              <div style="display:flex; flex-direction:column; gap:8px; padding:8px 0;">
+                <div class="field-row" style="margin:0;">
+                  <div class="field"><label>Periodo</label><input type="text" id="ed-periodo-${i}" value="${f.ec.periodo||''}"></div>
+                  <div class="field"><label>Monto (saldo final)</label><input type="number" id="ed-monto-${i}" value="${f.ec.monto||0}" step="0.01"></div>
+                </div>
+                <div class="field-row" style="margin:0;">
+                  <div class="field"><label>Fecha límite de pago</label><input type="date" id="ed-venc-${i}" value="${f.ec.fechaVencimiento||''}"></div>
+                  <div class="field"><label>Estatus</label>
+                    <select id="ed-estatus-${i}">
+                      <option value="pendiente" ${f.ec.estatus==='pendiente'?'selected':''}>Pendiente</option>
+                      <option value="pagado" ${f.ec.estatus==='pagado'?'selected':''}>Pagado</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field" style="margin:0;"><label>Descripción / concepto</label><textarea id="ed-concepto-${i}">${f.ec.concepto||''}</textarea></div>
+                <div style="display:flex; gap:8px;">
+                  <button type="button" class="btn btn-sm" data-guardar-ec="${i}">Guardar</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-cancelar-editar="${i}">Cancelar</button>
+                </div>
+              </div>
+            </td>`;
+          tr.querySelector(`[data-guardar-ec="${i}"]`).addEventListener('click', () => {
+            db.collection('estadosCuenta').doc(f.ec.id).update({
+              periodo: document.getElementById(`ed-periodo-${i}`).value.trim(),
+              monto: Number(document.getElementById(`ed-monto-${i}`).value) || 0,
+              fechaVencimiento: document.getElementById(`ed-venc-${i}`).value || null,
+              estatus: document.getElementById(`ed-estatus-${i}`).value,
+              concepto: document.getElementById(`ed-concepto-${i}`).value.trim()
+            }).then(() => renderHistorialPagosUnificado(id, container))
+            .catch(err => alert('Error: ' + err.message));
+          });
+        } else {
+          // Pago directo (sin EC vinculado)
+          const fechaStr = f.pago.fechaPago ? fechaComo(f.pago.fechaPago).toISOString().slice(0,10) : '';
+          tr.innerHTML = `
+            <td colspan="8">
+              <div style="display:flex; flex-direction:column; gap:8px; padding:8px 0;">
+                <div class="field-row" style="margin:0;">
+                  <div class="field"><label>Periodo</label><input type="text" id="ed-periodo-${i}" value="${f.pago.periodo||''}"></div>
+                  <div class="field"><label>Monto pagado</label><input type="number" id="ed-monto-${i}" value="${f.pago.monto||0}" step="0.01"></div>
+                </div>
+                <div class="field-row" style="margin:0;">
+                  <div class="field"><label>Fecha de pago</label><input type="date" id="ed-fecha-${i}" value="${fechaStr}"></div>
+                  <div class="field"><label>Método de pago</label>
+                    <select id="ed-metodo-${i}">${metodos.map(m=>`<option value="${m}" ${f.pago.metodoPago===m?'selected':''}>${m}</option>`).join('')}</select>
+                  </div>
+                </div>
+                <div class="field" style="margin:0;"><label>Concepto detallado</label><textarea id="ed-concepto-${i}">${f.pago.conceptoDetallado||f.pago.servicio||''}</textarea></div>
+                <div style="display:flex; gap:8px;">
+                  <button type="button" class="btn btn-sm" data-guardar-pago="${i}">Guardar</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-cancelar-editar="${i}">Cancelar</button>
+                </div>
+              </div>
+            </td>`;
+          tr.querySelector(`[data-guardar-pago="${i}"]`).addEventListener('click', () => {
+            const nuevaFecha = document.getElementById(`ed-fecha-${i}`).value;
+            const [yr,mo,dy] = nuevaFecha.split('-').map(Number);
+            db.collection('pagos').doc(f.pago.id).update({
+              periodo: document.getElementById(`ed-periodo-${i}`).value.trim(),
+              monto: Number(document.getElementById(`ed-monto-${i}`).value) || 0,
+              fechaPago: new Date(yr, mo-1, dy, 12, 0, 0),
+              metodoPago: document.getElementById(`ed-metodo-${i}`).value,
+              conceptoDetallado: document.getElementById(`ed-concepto-${i}`).value.trim()
+            }).then(() => renderHistorialPagosUnificado(id, container))
+            .catch(err => alert('Error: ' + err.message));
+          });
+        }
+        tr.querySelector(`[data-cancelar-editar="${i}"]`).addEventListener('click', () => renderHistorialPagosUnificado(id, container));
+      });
+    });
   });
 }
 
